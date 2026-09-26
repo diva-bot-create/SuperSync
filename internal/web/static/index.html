@@ -76,6 +76,16 @@ header {
   border-bottom: 1px solid transparent; transition: border-color .4s, box-shadow .4s;
   view-transition-name: header;
 }
+/* Our own title bar (in SuperSync's window) */
+body.app header { user-select: none; -webkit-user-select: none; }
+body.app-darwin header { padding-left: 88px; min-height: 52px; padding-top: 8px; padding-bottom: 8px; box-sizing: border-box; }
+body.app-darwin.fullscreen header { padding-left: 24px; }
+body.app-windows header { padding-right: 0; padding-top: 0; padding-bottom: 0; min-height: 48px; }
+.winctl { display: flex; align-self: stretch; margin-left: 6px; }
+.winctl button { all: unset; width: 46px; display: grid; place-items: center; color: var(--text); cursor: default; transition: background-color .15s; }
+.winctl svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
+.winctl button:hover { background: rgba(255,255,255,.08); }
+.winctl button.x:hover { background: #c42b1c; color: #fff; }
 header.scrolled { border-bottom-color: var(--line); box-shadow: 0 8px 28px rgba(0,0,0,.35); }
 header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; opacity: 0; transition: opacity .5s;
   background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent); background-size: 45% 100%; background-repeat: no-repeat;
@@ -920,6 +930,27 @@ $("main").addEventListener("scroll", e => $("#hdr").classList.toggle("scrolled",
 // ================= app =================
 // The token arrives in the URL fragment; keep it for this tab and remember it.
 let token = new URLSearchParams(location.hash.slice(1)).get("t") || store.get("token", "");
+
+// ---------- the title bar ----------
+// In SuperSync's own window the header is the title bar: drag it to move
+// the window, double-click to zoom. Mac keeps its window buttons (placed in
+// the header); Windows gets its own minimize/maximize/close.
+const APP_OS = new URLSearchParams(location.hash.slice(1)).get("app") || "";
+function windowAction(a) {
+  if (APP_OS === "darwin") window.webkit?.messageHandlers?.ss?.postMessage(a);
+  else if (APP_OS === "windows") window.ssWindow?.(a);
+}
+if (APP_OS) {
+  document.body.classList.add("app", "app-" + APP_OS);
+  const hdr = document.getElementById("hdr");
+  if (APP_OS === "windows") {
+    hdr.insertAdjacentHTML("beforeend", `<div class="winctl"><button data-w="min" title="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></button><button data-w="max" title="Maximize"><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" rx="1"/></svg></button><button data-w="close" class="x" title="Close"><svg viewBox="0 0 10 10"><path d="M.5.5l9 9M9.5.5l-9 9"/></svg></button></div>`);
+    hdr.querySelector(".winctl").addEventListener("click", e => { const b = e.target.closest("[data-w]"); if (b) windowAction(b.dataset.w); });
+  }
+  const interactive = t => t.closest("button, a, input, select, textarea, nav, [role=tab], .winctl, .bar");
+  hdr.addEventListener("mousedown", e => { if (e.button === 0 && e.detail === 1 && !interactive(e.target)) windowAction("drag"); });
+  hdr.addEventListener("dblclick", e => { if (!interactive(e.target)) windowAction("zoom"); });
+}
 if (token) store.set("token", token);
 
 async function api(path, body) {
@@ -1420,8 +1451,8 @@ function tierBadge(r) {
     const svc = SERVICE[r.stream] || r.stream;
     return `<span class="tier stream" title="${esc(r.stream === "soundcloud" ? "Streams from SoundCloud inside rekordbox; there's no file on this computer. SuperSync plays it from SoundCloud." : `Streams from ${svc} inside rekordbox; there's no file on this computer, so it only plays in rekordbox.`)}">${esc(svc.toUpperCase())}</span>`;
   }
-  if (r.noAccess) return `<span class="tier noaccess" title="${esc(NOACCESS_TIP)}">NO ACCESS</span>`;
-  if (r.missing) return `<span class="tier none" title="${esc((r.missingWhy || "The file isn't where rekordbox says it is.") + " Expected at: " + (r.path || "") + ". Right-click to locate it.")}">MISSING</span>`;
+  if (r.noAccess) return `<span class="tier noaccess" title="${esc(NOACCESS_TIP + (r.statErr ? ` (${IS_MAC ? "macOS" : "Windows"} says: ${r.statErr})` : ""))}">NO ACCESS</span>`;
+  if (r.missing) return `<span class="tier none" title="${esc((r.missingWhy || "The file isn't where rekordbox says it is.") + " Expected at: " + (r.path || "") + (r.statErr ? ` (${IS_MAC ? "macOS" : "Windows"} says: ${r.statErr})` : "") + ". Right-click to locate it.")}">MISSING</span>`;
   if (!r.tier) return "";
   const tip = TIER_TIP[r.tier] + " · " + (r.format || "").toUpperCase() + " " + (r.kbps || "") + " kbps" + (r.tierNote ? " · " + r.tierNote : "");
   if (r.id && (r.tier === "low" || r.tier === "normal"))
@@ -2250,10 +2281,11 @@ function trackMenu(r, i) {
     !r.id && r.status === "maybe" && { icon: "✓", label: "It's the same track (use my copy)", run: () => resolveMaybe(r, true) },
     !r.id && r.status === "maybe" && { icon: "⬇", label: "It's different (download this one)", run: () => resolveMaybe(r, false) },
     "-",
-    r.id && !r.stream && !r.missing && { icon: "📁", label: REVEAL, run: () => api("reveal", { id: r.id }) },
+    r.id && !r.stream && { icon: "📁", label: REVEAL, run: () => api("reveal", { id: r.id }).catch(e => toast(e.message)) },
     r.id && r.missing && !r.noAccess && { icon: "⌕", label: "Locate…", run: () => locateTrack(r) },
     r.id && r.missing && !r.noAccess && { icon: "⌕", label: "Find all moved files", run: findMoved },
-    r.missing && r.missingWhy && { icon: "ⓘ", label: "Why is it missing?", run: () => toast(r.missingWhy + " Expected at: " + r.path) },
+    r.missing && { icon: "ⓘ", label: "Why can't SuperSync find it?", run: () => toast((r.missingWhy || "") + " Expected at: " + r.path + (r.statErr ? ". The system says: " + r.statErr : "")) },
+    r.missing && { icon: "⎘", label: "Copy details for support", run: () => copyText(`Path: ${r.path}\nReason: ${r.missingWhy || (r.noAccess ? "no access" : "")}\nSystem: ${r.statErr || ""}\nOS: ${navigator.platform}`, "the details") },
     r.noAccess && { icon: "⚠", label: "Why can't SuperSync read this?", run: () => toast(NOACCESS_TIP) },
     canRelink(r) && { icon: "🔗", label: "Use another link…", run: () => relink(r) },
     st?.state === "failed" && { icon: "ⓘ", label: "Why it failed", run: () => toast(st.note || "Unknown error") },

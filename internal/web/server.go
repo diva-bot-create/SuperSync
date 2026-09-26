@@ -126,7 +126,8 @@ func Serve(a *app.App, port int, showUI, background bool, version string) error 
 		s.inWindow = true
 		go srv.Serve(ln)
 		// The window runs on the main thread until SuperSync quits.
-		if window.Run(window.Options{URL: u, Title: "SuperSync", Width: 1360, Height: 880,
+		// The page draws the title bar itself; tell it which system's.
+		if window.Run(window.Options{URL: u + "&app=" + runtime.GOOS, Title: "SuperSync", Width: 1360, Height: 880,
 			DataDir: filepath.Join(app.DataDir(), "WebView2"), OnClose: s.shutdown,
 			OnSyncAll: a.SyncAll, KeepRunning: !a.Cfg.QuitOnClose, Hidden: background}) {
 			if s.restarting.Load() {
@@ -371,14 +372,42 @@ func roots() []string {
 	return r
 }
 
+// reveal shows a file in Finder / Explorer. If the file isn't there, it
+// opens the nearest folder that is (and says so).
 func reveal(p string) error {
+	p = filepath.Clean(filepath.FromSlash(p)) // rekordbox stores C:/… with forward slashes
+	if _, err := os.Stat(p); err != nil {
+		dir := filepath.Dir(p)
+		for {
+			if _, err := os.Stat(dir); err == nil || filepath.Dir(dir) == dir {
+				break
+			}
+			dir = filepath.Dir(dir)
+		}
+		if _, err := os.Stat(dir); err != nil {
+			return fmt.Errorf("neither the file nor its folders exist on this computer: %s", p)
+		}
+		openFolder(dir)
+		return fmt.Errorf("the file isn't there; opened %s, the closest folder that exists", dir)
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("open", "-R", p).Start()
 	case "windows":
-		return exec.Command("explorer", "/select,", p).Start()
+		return revealWindows(p)
 	default:
 		return exec.Command("xdg-open", filepath.Dir(p)).Start()
+	}
+}
+
+func openFolder(dir string) {
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("open", dir).Start()
+	case "windows":
+		shellOpen(dir)
+	default:
+		exec.Command("xdg-open", dir).Start()
 	}
 }
 

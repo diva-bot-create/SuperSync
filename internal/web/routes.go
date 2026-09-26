@@ -619,7 +619,8 @@ type Row struct {
 	// Better is a better-quality copy found on disk (not in the library yet).
 	Better     *app.BetterCopy `json:"better,omitempty"`
 	MissingWhy string          `json:"missingWhy,omitempty"`
-	Stream     string          `json:"stream,omitempty"` // streaming service, for tracks with no file
+	StatErr    string          `json:"statErr,omitempty"` // what the system said when SuperSync looked for the file
+	Stream     string          `json:"stream,omitempty"`  // streaming service, for tracks with no file
 
 	// Rows of SoundCloud-imported playlists.
 	SC     *soundcloud.Track `json:"sc,omitempty"`
@@ -649,6 +650,13 @@ func (s *server) row(t *rbdb.Track) *Row {
 			r.NoAccess = os.IsPermission(err)
 			if !r.NoAccess {
 				r.MissingWhy = app.MissingReason(t.Path)
+			}
+			// The system's own words help tell a missing file from one that
+			// can't be read (cloud placeholders, locked drives...).
+			if pe, ok := err.(*os.PathError); ok {
+				r.StatErr = pe.Err.Error()
+			} else {
+				r.StatErr = err.Error()
 			}
 		}
 	}

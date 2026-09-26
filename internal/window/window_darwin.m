@@ -6,9 +6,27 @@ extern void ssMenuAction(int action);
 
 static BOOL gKeepRunning = YES; // closing the window hides it; SuperSync stays in the menu bar
 
-@interface SSDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate>
+// The page draws its own title bar: this web view remembers the last click,
+// so the page can ask to drag the window from its header.
+@interface SSWebView : WKWebView
+@property(strong) NSEvent *lastDown;
+@end
+@implementation SSWebView
+- (void)mouseDown:(NSEvent *)e {
+  self.lastDown = e;
+  [super mouseDown:e];
+}
+- (BOOL)acceptsFirstMouse:(NSEvent *)e {
+  return YES; // a click on the header of a background window can drag it
+}
+@end
+
+static const CGFloat kHeader = 56;  // the page's header height (the title bar)
+static const CGFloat kLightsX = 20; // where the window buttons start
+
+@interface SSDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler>
 @property(strong) NSWindow *window;
-@property(strong) WKWebView *web;
+@property(strong) SSWebView *web;
 @property(strong) NSURL *home;
 @property(strong) NSStatusItem *status;
 @end
@@ -31,6 +49,7 @@ static SSDelegate *gDelegate;
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
   [self.window makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
+  [self placeLights];
 }
 - (void)syncAll:(id)sender {
   ssMenuAction(1);
@@ -85,6 +104,60 @@ static SSDelegate *gDelegate;
   [a addButtonWithTitle:@"OK"];
   [a addButtonWithTitle:@"Cancel"];
   [a beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse r) { handler(r == NSAlertFirstButtonReturn); }];
+}
+// The page's header is the title bar: it asks to drag or zoom the window.
+- (void)userContentController:(WKUserContentController *)uc didReceiveScriptMessage:(WKScriptMessage *)m {
+  NSString *a = [m.body isKindOfClass:[NSString class]] ? m.body : @"";
+  if ([a isEqualToString:@"drag"] && self.web.lastDown) {
+    [self.window performWindowDragWithEvent:self.web.lastDown];
+  } else if ([a isEqualToString:@"zoom"]) {
+    NSString *act = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+    if ([act isEqualToString:@"Minimize"]) [self.window performMiniaturize:nil];
+    else if (![act isEqualToString:@"None"]) [self.window performZoom:nil];
+  }
+}
+// Keep the window buttons centred in the page's header.
+- (void)placeLights {
+  NSWindow *w = self.window;
+  NSButton *close = [w standardWindowButton:NSWindowCloseButton];
+  NSButton *mini = [w standardWindowButton:NSWindowMiniaturizeButton];
+  NSButton *zoom = [w standardWindowButton:NSWindowZoomButton];
+  NSView *bar = close.superview.superview; // the title bar's container
+  if (!close || !bar || (w.styleMask & NSWindowStyleMaskFullScreen)) return;
+  CGFloat bh = NSHeight(close.frame);
+  // The container grows down from the window's top; the buttons keep their
+  // offset from its bottom, so its height sets how far down they sit.
+  CGFloat top = floor((kHeader - bh) / 2);
+  NSRect f = bar.frame;
+  f.size.height = top + bh + NSMinY(close.frame);
+  f.origin.y = NSHeight(w.frame) - f.size.height;
+  bar.frame = f;
+  CGFloat gap = NSMinX(mini.frame) - NSMinX(close.frame);
+  NSArray *bs = @[ close, mini, zoom ];
+  for (NSUInteger i = 0; i < bs.count; i++) {
+    NSButton *b = bs[i];
+    [b setFrameOrigin:NSMakePoint(kLightsX + gap * i, NSMinY(b.frame))];
+  }
+}
+- (void)windowDidResize:(NSNotification *)n {
+  [self placeLights];
+}
+// AppKit lays the title bar out again at these moments; put them back.
+- (void)windowDidBecomeKey:(NSNotification *)n {
+  [self placeLights];
+}
+- (void)windowDidResignKey:(NSNotification *)n {
+  [self placeLights];
+}
+- (void)windowDidBecomeMain:(NSNotification *)n {
+  [self placeLights];
+}
+- (void)windowDidEnterFullScreen:(NSNotification *)n {
+  [self.web evaluateJavaScript:@"document.body.classList.add('fullscreen')" completionHandler:nil];
+}
+- (void)windowDidExitFullScreen:(NSNotification *)n {
+  [self.web evaluateJavaScript:@"document.body.classList.remove('fullscreen')" completionHandler:nil];
+  [self placeLights];
 }
 - (void)showSettings:(id)sender {
   [self.web evaluateJavaScript:@"window.selectTab && selectTab('settings')" completionHandler:nil];
@@ -176,10 +249,14 @@ void ssRun(const char *url, const char *title, int w, int h, int hidden) {
     NSWindow *win = [[NSWindow alloc]
         initWithContentRect:frame
                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable |
-                            NSWindowStyleMaskResizable
+                            NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView
                     backing:NSBackingStoreBuffered
                       defer:NO];
     win.title = name;
+    // No system title bar: the page's header takes its place (the window
+    // buttons stay, placed in the header).
+    win.titlebarAppearsTransparent = YES;
+    win.titleVisibility = NSWindowTitleHidden;
     win.minSize = NSMakeSize(720, 520);
     win.backgroundColor = [NSColor colorWithSRGBRed:15 / 255.0 green:15 / 255.0 blue:16 / 255.0 alpha:1];
     win.releasedWhenClosed = NO;
@@ -190,7 +267,8 @@ void ssRun(const char *url, const char *title, int w, int h, int hidden) {
 
     WKWebViewConfiguration *cfg = [WKWebViewConfiguration new];
     cfg.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
-    WKWebView *web = [[WKWebView alloc] initWithFrame:frame configuration:cfg];
+    [cfg.userContentController addScriptMessageHandler:gDelegate name:@"ss"];
+    SSWebView *web = [[SSWebView alloc] initWithFrame:frame configuration:cfg];
     [web setValue:@NO forKey:@"drawsBackground"]; // the window's dark background shows while loading
     web.UIDelegate = gDelegate;
     web.navigationDelegate = gDelegate;
@@ -199,6 +277,7 @@ void ssRun(const char *url, const char *title, int w, int h, int hidden) {
 
     gDelegate.window = win;
     gDelegate.web = web;
+    [gDelegate placeLights];
     gDelegate.home = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
     [web loadRequest:[NSURLRequest requestWithURL:gDelegate.home]];
     if (hidden) {
@@ -208,6 +287,9 @@ void ssRun(const char *url, const char *title, int w, int h, int hidden) {
       [win makeKeyAndOrderFront:nil];
       [NSApp activateIgnoringOtherApps:YES];
     }
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [gDelegate placeLights];
+    });
     [NSApp run];
   }
 }

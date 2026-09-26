@@ -43,6 +43,11 @@ var (
 	shellNotifyIcon     = shell32.NewProc("Shell_NotifyIconW")
 	getModuleHandle     = kernel32.NewProc("GetModuleHandleW")
 	keybdEvent          = user32.NewProc("keybd_event")
+	setWindowPos        = user32.NewProc("SetWindowPos")
+	isZoomed            = user32.NewProc("IsZoomed")
+	releaseCapture      = user32.NewProc("ReleaseCapture")
+	getSystemMetrics    = user32.NewProc("GetSystemMetrics")
+	moveMemory          = kernel32.NewProc("RtlMoveMemory")
 )
 
 const (
@@ -54,6 +59,11 @@ const (
 	wmLButtonDbl  = 0x0203
 	wmRButtonUp   = 0x0205
 	wmTray        = 0x8000 + 1 // WM_APP + 1
+	wmNCCalcSize  = 0x0083
+	wmNCLButton   = 0x00A1
+	htCaption     = 2
+	swMinimize    = 6
+	swMaximize    = 3
 	swHide        = 0
 	swRestore     = 9
 	swShow        = 5
@@ -126,6 +136,10 @@ func Run(o Options) bool {
 	// Watch the window's messages: the close button hides it, and the tray
 	// icon's clicks arrive here.
 	origProc, _, _ = setWindowLongPtr.Call(hwnd, gwlpWndProc, syscall.NewCallback(wndProc))
+	// Drop the system title bar (the page's header replaces it) but keep the
+	// frame, so the window still snaps, shadows and resizes from its sides.
+	setWindowPos.Call(hwnd, 0, 0, 0, 0, 0, 0x0020|0x0002|0x0001|0x0004) // FRAMECHANGED|NOMOVE|NOSIZE|NOZORDER
+	w.Bind("ssWindow", func(action string) { windowAction(hwnd, action) })
 	addTray(hwnd, o.Title)
 	w.SetSize(720, 520, webview2.HintMin)
 	w.Navigate(o.URL)
@@ -141,8 +155,35 @@ func Run(o Options) bool {
 	return true
 }
 
+type rect struct{ Left, Top, Right, Bottom int32 }
+
+type ncCalcSizeParams struct {
+	Rgrc  [3]rect
+	Lppos uintptr
+}
+
 func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
 	switch msg {
+	case wmNCCalcSize:
+		if wp != 0 {
+			// Let Windows size the frame, then give the caption's space to
+			// the page: its header is the title bar.
+			var p ncCalcSizeParams
+			size := unsafe.Sizeof(p)
+			moveMemory.Call(uintptr(unsafe.Pointer(&p)), lp, size)
+			top := p.Rgrc[0].Top
+			callWindowProc.Call(origProc, hwnd, msg, wp, lp)
+			moveMemory.Call(uintptr(unsafe.Pointer(&p)), lp, size)
+			p.Rgrc[0].Top = top
+			if z, _, _ := isZoomed.Call(hwnd); z != 0 {
+				// Maximized windows hang over the screen edge by the frame.
+				f, _, _ := getSystemMetrics.Call(33)   // SM_CYFRAME
+				pad, _, _ := getSystemMetrics.Call(92) // SM_CXPADDEDBORDER
+				p.Rgrc[0].Top += int32(f + pad)
+			}
+			moveMemory.Call(lp, uintptr(unsafe.Pointer(&p)), size)
+			return 0
+		}
 	case wmClose:
 		if keepRunning.Load() && !quitting.Load() {
 			showWindow.Call(hwnd, swHide)
@@ -235,6 +276,26 @@ func with(f func(w webview2.WebView)) {
 
 // Focus brings the window back (another launch of SuperSync, or the tray).
 func Focus() { with(func(w webview2.WebView) { show(uintptr(w.Window())) }) }
+
+// windowAction does what the page's title bar asks: drag the window,
+// minimize, maximize/restore (also a double-click), or close.
+func windowAction(hwnd uintptr, action string) {
+	switch action {
+	case "drag":
+		releaseCapture.Call()
+		postMessage.Call(hwnd, wmNCLButton, htCaption, 0)
+	case "min":
+		showWindow.Call(hwnd, swMinimize)
+	case "max", "zoom":
+		if z, _, _ := isZoomed.Call(hwnd); z != 0 {
+			showWindow.Call(hwnd, swRestore)
+		} else {
+			showWindow.Call(hwnd, swMaximize)
+		}
+	case "close":
+		postMessage.Call(hwnd, wmClose, 0, 0)
+	}
+}
 
 // Edit runs an edit command (paste, cut, copy, selectAll, undo, redo) in the
 // focused text field by pressing its shortcut. Pages can't read the
