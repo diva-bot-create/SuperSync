@@ -577,7 +577,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         <h3>Library</h3>
         <div class="muted" id="srcNote">SuperSync works directly on rekordbox's own library, found automatically.</div>
         <div class="val" id="srcVal">…</div>
-        <div class="row"><button id="pickDb">Choose rekordbox library…</button><button class="link" id="autoDb">Find automatically</button><button id="addFolder" class="hidden">Add music folder to library</button></div>
+        <div class="row"><button id="diagBtn" title="Copies a short report about your library for troubleshooting (paths of a few tracks SuperSync can't open, and why)">Copy library diagnostics</button><button id="pickDb">Choose rekordbox library…</button><button class="link" id="autoDb">Find automatically</button><button id="addFolder" class="hidden">Add music folder to library</button></div>
         <ul class="steps" style="margin-top:12px">
           <li>SuperSync reads rekordbox's library directly, so it's always current.</li>
           <li>It only writes (new playlists, downloaded tracks, duplicate clean-ups) while rekordbox is closed, and backs the library up first, keeping the last 10 backups.</li>
@@ -2916,6 +2916,10 @@ $("#updBtn").onclick = confirmUpdate;
 $("#updInstall").onclick = confirmUpdate;
 $("#updCheck").onclick = async () => { try { S = await api("update/check", {}); paintUpdate(); } catch (e) { toast(e.message, "err"); } };
 $("#autoUpdate").onchange = e => saveSetting({ autoUpdate: e.target.checked });
+$("#diagBtn").onclick = async () => {
+  try { const r = await api("diagnostics"); copyText(await r.text(), "the diagnostics (paste them to whoever's helping you)"); }
+  catch (e) { toast(e.message, "err"); }
+};
 $("#autoSync").onchange = e => saveSetting({ autoSyncHours: Number(e.target.value) });
 $("#autoApply").onchange = e => saveSetting({ autoApply: e.target.checked });
 $("#syncAll").onclick = async () => { try { await api("sync/all", {}); toast("Syncing all playlists…"); setTimeout(refresh, 800); } catch (e) { toast(e.message, "err"); } };

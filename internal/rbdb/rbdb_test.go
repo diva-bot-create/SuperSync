@@ -359,3 +359,18 @@ func TestPlaylistEdits(t *testing.T) {
 		t.Fatal("masterPlaylists6.xml not updated")
 	}
 }
+
+func TestLocalPath(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "Café - Track.mp3")
+	os.WriteFile(f, []byte("x"), 0o644)
+	if got := localPath(f); got != f {
+		t.Fatalf("existing path changed: %q", got)
+	}
+	if got := localPath("file://localhost" + filepath.ToSlash(f)); got != f {
+		t.Fatalf("file:// address not resolved: %q", got)
+	}
+	if got := localPath("/nowhere/at/all.mp3"); got != "/nowhere/at/all.mp3" {
+		t.Fatalf("unknown path changed: %q", got)
+	}
+}

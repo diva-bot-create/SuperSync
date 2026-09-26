@@ -337,6 +337,51 @@ func (s *server) routes(mux *http.ServeMux) {
 		a.FindBetterCopies()
 		reply(w, map[string]bool{"ok": true}, nil)
 	})
+	// A plain-text report for tracking down tracks SuperSync can't open.
+	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "SuperSync %s on %s/%s\n", s.version, runtime.GOOS, runtime.GOARCH)
+		if a.Src == nil {
+			fmt.Fprintf(&b, "No library open: %s\n", a.SrcErr)
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Write([]byte(b.String()))
+			return
+		}
+		info := a.Src.Info()
+		fmt.Fprintf(&b, "Library: %s at %s\nDownload folder: %s\n", info.Kind, info.Path, a.Cfg.MusicDir)
+		var total, streams, missing, noAccess, adjusted int
+		var samples []string
+		for _, t := range a.Src.Tracks() {
+			total++
+			if t.Stream != "" {
+				streams++
+				continue
+			}
+			if t.StoredPath != "" && t.StoredPath != t.Path {
+				adjusted++
+			}
+			_, err := os.Stat(t.Path)
+			if err == nil {
+				continue
+			}
+			if os.IsPermission(err) {
+				noAccess++
+			} else {
+				missing++
+			}
+			if len(samples) < 8 {
+				dir := filepath.Dir(filepath.FromSlash(t.Path))
+				_, derr := os.Stat(dir)
+				samples = append(samples, fmt.Sprintf("- stored: %q\n  looked at: %q\n  error: %v\n  folder exists: %v", t.StoredPath, t.Path, err, derr == nil))
+			}
+		}
+		fmt.Fprintf(&b, "Tracks: %d (%d streaming, %d can't be found, %d can't be read, %d found under another spelling)\n", total, streams, missing, noAccess, adjusted)
+		if len(samples) > 0 {
+			b.WriteString("Examples:\n" + strings.Join(samples, "\n") + "\n")
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(b.String()))
+	})
 	mux.HandleFunc("GET /api/missing/find", func(w http.ResponseWriter, r *http.Request) {
 		m, err := a.FindMoved()
 		if m == nil {

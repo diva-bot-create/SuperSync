@@ -1,9 +1,12 @@
 package rbdb
 
 import (
+	"golang.org/x/text/unicode/norm"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -42,6 +45,42 @@ type Track struct {
 	// service's track id.
 	Stream   string `json:"stream,omitempty"`
 	StreamID string `json:"streamId,omitempty"`
+	// StoredPath is FolderPath exactly as rekordbox stored it, when Path had
+	// to be adjusted to find the file (see localPath).
+	StoredPath string `json:"storedPath,omitempty"`
+}
+
+// localPath turns the path rekordbox stored into one this computer can
+// open. rekordbox normally stores "C:/Users/…" or "/Users/…", but libraries
+// can also hold "file://localhost/…" addresses, "/C:/…" (a slash before the
+// drive), or accented names in the other Unicode form (a library that came
+// from a Mac). If the stored path isn't there, try those spellings.
+func localPath(p string) string {
+	if exists(p) {
+		return p
+	}
+	var cands []string
+	q := p
+	if strings.HasPrefix(strings.ToLower(q), "file://") {
+		if u, err := url.Parse(q); err == nil {
+			q = u.Path
+			if u.Host != "" && u.Host != "localhost" {
+				q = "//" + u.Host + q // a network share
+			}
+		}
+		cands = append(cands, q)
+	}
+	if runtime.GOOS == "windows" && len(q) > 3 && q[0] == '/' && q[2] == ':' {
+		q = q[1:] // "/C:/Users/…"
+		cands = append(cands, q)
+	}
+	cands = append(cands, norm.NFC.String(q), norm.NFD.String(q))
+	for _, c := range cands {
+		if c != p && exists(filepath.FromSlash(c)) {
+			return filepath.FromSlash(c)
+		}
+	}
+	return p
 }
 
 var streamRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*):(?://)?(?:.*?[:/])?(\d+)$`)
@@ -118,6 +157,10 @@ func (d *DB) Tracks() ([]*Track, error) {
 			return nil, err
 		}
 		t.Stream, t.StreamID = parseStream(t.Path)
+		if t.Stream == "" {
+			t.StoredPath = t.Path
+			t.Path = localPath(t.Path)
+		}
 		t.BPM = float64(bpm) / 100
 		t.Rating = stars(rating)
 		t.Analysed = analysed != 0
