@@ -1236,7 +1236,11 @@ function renderListHead(animate) {
   $("#plMeta").innerHTML = meta;
   $("#findMoved")?.addEventListener("click", findMoved);
   $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
-    + (notIn ? `<button class="tier none" data-tier="missing" aria-pressed="${tierFilter === "missing"}" title="SoundCloud tracks not in your library yet">NEED ${notIn}</button>` : "");
+    + [["need", "none", "NEED", "Not in your library yet: the next sync downloads them"],
+       ["maybe", "normal", "MAYBE", "Might already be in your library: tell SuperSync whether they're the same"],
+       ["failed", "low", "FAILED", "Couldn't be downloaded (hover a track to see why)"]]
+      .map(([k, cls, label, tip]) => { const n = d.rows.filter(r => rowState(r) === k).length;
+        return n ? `<button class="tier ${cls}" data-tier="${k}" aria-pressed="${tierFilter === k}" title="${tip}">${label} ${n}</button>` : ""; }).join("");
   if (animate) { rise([$("#plName"), $("#plMeta")], { gap: 60, dist: 6 }); rise($("#tierChips").children, { gap: 40, dist: 6 }); }
 }
 $("#tierChips").addEventListener("click", e => {
@@ -1335,7 +1339,7 @@ function applyFilter(animate, keepScroll) {
   const q = $("#search").value.trim().toLowerCase();
   const words = q ? q.split(/\s+/) : [];
   cur.view = cur.data.rows.filter(r => {
-    if (tierFilter === "missing" ? !!r.id : tierFilter && r.tier !== tierFilter) return false;
+    if (tierFilter && (["need", "maybe", "failed"].includes(tierFilter) ? rowState(r) !== tierFilter : r.tier !== tierFilter)) return false;
     if (!words.length) return true;
     const hay = `${r.title} ${r.artist} ${r.album || ""} ${r.genre || ""} ${r.key || ""} ${r.sc?.title || ""}`.toLowerCase();
     return words.every(w => hay.includes(w));
@@ -1478,6 +1482,15 @@ function playId(r) {
   if (r.id) return r.missing ? null : r.id;
   if (r._pid === undefined) r._pid = r.sc && !r.sc.unavailable && !r.sc.goPlus && !r.sc.protected && r.status !== "unavailable" && cur.data?.sc?.source !== "youtube" ? "sc:" + r.sc.id : null;
   return r._pid;
+}
+// Where a synced playlist's track stands if it isn't in the library:
+// "need" (a sync will get it), "maybe" (possibly already there) or "failed".
+function rowState(r) {
+  if (r.id) return "";
+  const st = stepFor(r)?.state;
+  if (st === "failed" || st === "skipped" || r.status === "failed" || r.status === "unavailable") return "failed";
+  if (r.status === "maybe" && !st) return "maybe";
+  return "need";
 }
 // A synced playlist's live download state for a row, while it syncs.
 function stepFor(r) {
