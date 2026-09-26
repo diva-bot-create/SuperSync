@@ -2143,20 +2143,33 @@ async function stopSyncing(url, name) {
 
 // ---------- linking a synced track to one already in the library ----------
 function pickLibraryTrack(r) {
-  const d = $("#confirm"), url = cur.data?.sc?.url;
+  const url = cur.data?.sc?.url;
   if (!url || !r.sc) return;
-  $("#confTitle").textContent = "It's already in my library";
-  $("#confBody").innerHTML = `<p style="margin-top:0">Pick your copy of <b>${esc(r.sc.title)}</b>. It joins this playlist in its place, and later syncs remember it.</p>
-    <input type="text" id="libQ" value="${esc(r.sc.title.replace(/[\(\[].*$/, "").trim())}" autocomplete="off" spellcheck="false" style="width:100%;font-size:14px;padding:10px 12px">
+  searchLibrary("It's already in my library", `Pick your copy of <b>${esc(r.sc.title)}</b>. It joins this playlist in its place, and later syncs remember it.`,
+    r.sc.title, null, async t => {
+      try {
+        const res = await withRekordbox("add it to the playlist", restart => api("sc/link", { playlist: url, scId: r.sc.id, trackId: t.id, restart }));
+        if (!res) return;
+        toast("Linked your copy.", "ok");
+        await loadLibrary(); openList(cur.id, { quiet: true });
+      } catch (err) { toast(err.message, "err"); }
+    });
+}
+// A dialog to search the library and pick a track (except skipID).
+function searchLibrary(title, intro, query, skipID, onPick) {
+  const d = $("#confirm");
+  $("#confTitle").textContent = title;
+  $("#confBody").innerHTML = `<p style="margin-top:0">${intro}</p>
+    <input type="text" id="libQ" value="${esc(String(query || "").replace(/[\(\[].*$/, "").trim())}" autocomplete="off" spellcheck="false" style="width:100%;font-size:14px;padding:10px 12px">
     <div class="plpicks" id="libHits" style="margin-top:10px"></div>`;
   $("#confYes").textContent = "Cancel"; $("#confYes").disabled = false;
   $("#confNo").style.display = "none";
   let all = null;
-  const done = () => { $("#confNo").style.display = ""; closeDlg(d); };
+  const done = () => { $("#confNo").style.display = ""; return closeDlg(d); };
   const show = () => {
     if (!all) return;
     const words = $("#libQ").value.toLowerCase().split(/\s+/).filter(Boolean);
-    const hits = all.filter(t => { const h = `${t.title} ${t.artist} ${t.path || ""}`.toLowerCase(); return words.every(w => h.includes(w)); }).slice(0, 40);
+    const hits = all.filter(t => { if (t.id === skipID) return false; const h = `${t.title} ${t.artist} ${t.path || ""}`.toLowerCase(); return words.every(w => h.includes(w)); }).slice(0, 40);
     $("#libHits").innerHTML = hits.length ? hits.map(t => `<button class="plpick" data-id="${esc(t.id)}"><b>${esc(t.title)}</b> <span class="muted">${esc(t.artist || "")} · ${fmtDur(t.length) || ""}${t.tier ? " · " + (TIER_LABEL[t.tier] || "") : ""}</span></button>`).join("") : `<div class="muted" style="padding:8px">No tracks match. Try fewer words.</div>`;
   };
   openDlg(d);
@@ -2168,14 +2181,22 @@ function pickLibraryTrack(r) {
   $("#libHits").onclick = async e => {
     const b = e.target.closest("[data-id]");
     if (!b) return;
-    done();
-    try {
-      const res = await withRekordbox("add it to the playlist", restart => api("sc/link", { playlist: url, scId: r.sc.id, trackId: b.dataset.id, restart }));
-      if (!res) return;
-      toast("Linked your copy.", "ok");
-      await loadLibrary(); openList(cur.id, { quiet: true });
-    } catch (err) { toast(err.message, "err"); }
+    await done(); // the next step may reuse this dialog
+    onPick(all.find(t => t.id === b.dataset.id));
   };
+}
+
+// A duplicate SuperSync didn't spot: fold this track into another library
+// track (the one kept), exactly as a duplicate clean-up does.
+function replaceWithLibraryTrack(r) {
+  if (!r?.id) return;
+  searchLibrary("Replace with a track from my library",
+    `Pick the copy to keep instead of <b>${esc(r.title)}</b>. It takes this track's place in your playlists and history, gets its cues if it has none, and this file is then ${esc(cleanupWhere(true))}.`,
+    r.title, r.id, keepT => {
+      const g = { id: "manual", copies: [{ path: keepT.path, rel: keepT.path.split(/[\\/]/).pop() }, { path: r.path, rel: r.path.split(/[\\/]/).pop() }], lengthsDiffer: false };
+      keep[g.id] = keepT.path;
+      confirmCleanup([g]);
+    });
 }
 
 // ---------- upgrading a LOW/NORMAL track ----------
@@ -2384,6 +2405,7 @@ function trackMenu(r, i) {
     r.id && (r.tier === "low" || r.tier === "normal") && r.better && { icon: "↑", label: `Swap in the ${r.better.label} copy`, run: () => swapUpgrade(r, r.better.path) },
     r.id && (r.tier === "low" || r.tier === "normal") && { icon: "📂", label: "I have a better copy…", run: () => chooseUpgrade(r) },
     r.id && { icon: "＋", label: "Add to playlist…", run: () => addToPlaylist([r.id]) },
+    r.id && !r.stream && { icon: "⇄", label: "Replace with a track from my library…", run: () => replaceWithLibraryTrack(r) },
     r.id && cur.id && cur.id !== "all" && !cur.id.startsWith("sc:") && { icon: "−", label: "Remove from this playlist", run: () => removeFromPlaylist(cur.id, [r.id]) },
     !r.id && r.status === "maybe" && { icon: "✓", label: "It's the same track (use my copy)", run: () => resolveMaybe(r, true) },
     r.id && sc && cur.data?.sc && r.status === "have" && { icon: "✕", label: "Not this track (download the SoundCloud one)", run: () => resolveMaybe(r, false) },
