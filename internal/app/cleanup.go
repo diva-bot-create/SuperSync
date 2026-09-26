@@ -164,8 +164,9 @@ func (a *App) UndoCleanup() error {
 	return a.Scan(nil)
 }
 
-// WithRekordboxClosed runs fn; if rekordbox is open and restart is set, it
-// asks rekordbox to quit first and reopens it afterwards.
+// WithRekordboxClosed runs fn; if rekordbox is open and restart is set (the
+// user confirmed), it quits rekordbox first, forcing it if it doesn't close
+// within a few seconds, and reopens it afterwards.
 func (a *App) WithRekordboxClosed(restart bool, fn func() error) error {
 	if a.Src == nil || a.Src.Info().Kind != "rekordbox" || !rbdb.Running() {
 		return fn()
@@ -173,7 +174,7 @@ func (a *App) WithRekordboxClosed(restart bool, fn func() error) error {
 	if !restart {
 		return rbdb.ErrRunning
 	}
-	app, err := rbdb.Quit(60 * time.Second)
+	app, err := rbdb.Quit(8 * time.Second)
 	if err != nil {
 		return err
 	}

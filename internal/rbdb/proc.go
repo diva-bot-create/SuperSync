@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// ErrWouldNotQuit means rekordbox was asked to quit but is still open
-// (usually because it's showing a dialog, e.g. about an unfinished export).
-var ErrWouldNotQuit = errors.New("rekordbox didn't quit — check it for an open dialog, or close it yourself")
+// ErrWouldNotQuit means rekordbox is still running even after a force-quit.
+var ErrWouldNotQuit = errors.New("rekordbox didn't quit, even when forced; close it yourself")
 
 // appPath finds the running rekordbox's application: the .app bundle on
 // macOS, the .exe on Windows.
@@ -42,10 +41,12 @@ func appPath() string {
 	return ""
 }
 
-// Quit asks rekordbox to quit the way ⌘Q / closing its window does (never a
-// force-kill, which could corrupt the library mid-write) and waits for it to
-// close. It returns the application to pass to Relaunch.
-func Quit(timeout time.Duration) (string, error) {
+// Quit closes rekordbox and returns the application to pass to Relaunch. It
+// first asks rekordbox to quit normally (as its Quit menu item does), so an
+// idle rekordbox can finish writing its library; if it's still open after
+// grace (e.g. showing a dialog), it force-quits it. Only call this after the
+// user has confirmed.
+func Quit(grace time.Duration) (string, error) {
 	if !Running() {
 		return "", nil
 	}
@@ -62,16 +63,35 @@ func Quit(timeout time.Duration) (string, error) {
 	default:
 		return "", errors.New("restarting rekordbox isn't supported on this system")
 	}
-	deadline := time.Now().Add(timeout)
-	for Running() {
-		if time.Now().After(deadline) {
+	if !waitClosed(grace) {
+		forceQuit()
+		if !waitClosed(10 * time.Second) {
 			return app, ErrWouldNotQuit
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
-	// Let it finish flushing the library to disk.
+	// Let the file system settle before the library is read.
 	time.Sleep(2 * time.Second)
 	return app, nil
+}
+
+func waitClosed(d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for Running() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return true
+}
+
+func forceQuit() {
+	switch runtime.GOOS {
+	case "darwin":
+		exec.Command("pkill", "-KILL", "-x", "rekordbox").Run()
+	case "windows":
+		exec.Command("taskkill", "/F", "/IM", "rekordbox.exe").Run()
+	}
 }
 
 // Relaunch opens rekordbox again.

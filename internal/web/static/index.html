@@ -583,11 +583,11 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   <div class="dlg-b">
     <p style="margin-top:0">rekordbox is open, and SuperSync can only change the library while it's closed. To <b id="quitWhat"></b>, SuperSync will:</p>
     <ol class="steps">
-      <li>ask rekordbox to quit, the same as choosing Quit from its menu (it's never force-quit);</li>
+      <li>quit rekordbox: a normal quit first, then a force-quit if it hasn't closed within a few seconds;</li>
       <li>back up the library and make the change;</li>
       <li>open rekordbox again.</li>
     </ol>
-    <div class="warn">If you're playing, cancel: the decks stop when rekordbox quits. If rekordbox asks you something as it closes, answer it there.</div>
+    <div class="warn">If you're playing, cancel: the decks stop. A force-quit skips any rekordbox dialog and loses anything unsaved in it, such as an export in progress. Your library is backed up first either way.</div>
   </div>
   <div class="dlg-f"><button id="quitNo">Keep rekordbox open</button><button class="primary" id="quitYes">Quit rekordbox &amp; continue</button></div>
 </dialog>
@@ -1918,7 +1918,7 @@ $("#groups").addEventListener("click", e => {
 });
 $("#moveAll").onclick = () => confirmCleanup(groups.filter(g => !g.lengthsDiffer));
 // Confirm, then fold the groups' extras into their keepers. If rekordbox is
-// open, offer to restart it (a normal quit, never a force-kill).
+// open, the server says so and withRekordbox asks before quitting it.
 function confirmCleanup(gs) {
   gs = gs.filter(Boolean);
   if (!gs.length) return;
