@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"supersync/internal/match"
 )
 
 // ErrNotDownloadable means there's nothing to fetch: no download button and
@@ -67,7 +69,8 @@ func (c *Client) Download(t *Track, dir, token string, progress Progress) (path 
 	}
 	p, err := c.downloadStream(t, dir, progress)
 	if err == nil {
-		err = tagMP3(p, t.Title, trackArtist(t))
+		artist, title := t.ArtistTitle()
+		err = tagMP3(p, title, artist)
 	}
 	return p, false, err
 }
@@ -87,11 +90,15 @@ func globEscape(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`).Replace(s)
 }
 
-func trackArtist(t *Track) string {
-	if t.Artist != "" {
-		return t.Artist
+// ArtistTitle is the track's artist and title for tags and the library:
+// split from "Artist - Title" uploads with promo tags removed, falling back to
+// the publisher's artist field, then the uploader.
+func (t *Track) ArtistTitle() (artist, title string) {
+	fallback := t.Artist
+	if fallback == "" {
+		fallback = t.Uploader
 	}
-	return t.Uploader
+	return match.ArtistTitle(t.Title, fallback)
 }
 
 // tagMP3 puts a title/artist ID3 tag on a stream mp3 (SoundCloud's have

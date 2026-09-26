@@ -58,3 +58,32 @@ func TestDifferentTrack(t *testing.T) {
 		}
 	}
 }
+
+func TestArtistTitle(t *testing.T) {
+	cases := []struct{ raw, fallback, artist, title string }{
+		{"Waitz - Smoke & Mirrors (Original Mix) [Free Download]", "Waitz", "Waitz", "Smoke & Mirrors (Original Mix)"},
+		{"Tech House | Santino - Bora Bora", "Tech House", "Santino", "Bora Bora"},
+		{"Tech House | H0t 1n H3r3 (JOHNY GAMBLE BACKWORK EDIT) *FREE DL*", "Tech House", "Tech House", "H0t 1n H3r3 (JOHNY GAMBLE BACKWORK EDIT)"},
+		{"FREE DOWNLOAD: Hutchy — Boogie To What You Want (Original Mix)", "CERTIFIED JACKIN", "Hutchy", "Boogie To What You Want (Original Mix)"},
+		{"PREMIERE: Chris Stussy - All Night Long [OUT NOW]", "Some Label", "Chris Stussy", "All Night Long"},
+		{"0ut 0f My M1nd (Colin Push Edit)", "Colin Push", "Colin Push", "0ut 0f My M1nd (Colin Push Edit)"},
+		{"Fred again.. - Delilah (pull me out of this) (Official Audio)", "Fred again..", "Fred again..", "Delilah (pull me out of this)"},
+		{"Salute ft. Sammy Virji - Peach", "Salute", "Salute ft. Sammy Virji", "Peach"},
+		{"Bicep - Glue (feat. Someone) [Hammer Remix]", "x", "Bicep", "Glue (feat. Someone) (Hammer Remix)"},
+		{"LA COLADERA", "LATINA PALESTINA", "LATINA PALESTINA", "LA COLADERA"},
+		// YouTube: "Song - Channel", channel taglines, and promo segments.
+		{"Feel Good Upbeat Background Music - Mediacharger", "MediaCharger - Music For YouTube Videos", "MediaCharger", "Feel Good Upbeat Background Music"},
+		{"Cute Whistling Song - Meme Music - Mediacharger", "MediaCharger - Music For YouTube Videos", "MediaCharger", "Cute Whistling Song - Meme Music"},
+		{"Cute Fun Music - Background Music For Youtube Videos", "MediaCharger - Music For YouTube Videos", "MediaCharger", "Cute Fun Music"},
+		{"Cute And Uplifting Background Music - Creative Commons", "MediaCharger - Music For YouTube Videos", "MediaCharger", "Cute And Uplifting Background Music"},
+		{"Stranger Things 80's Synth wave - Music for Videos | Creative Commons", "MediaCharger - Music For YouTube Videos", "MediaCharger", "Stranger Things 80's Synth wave"},
+		{"Fred again.. - Delilah (pull me out of this) [Official Video]", "Fred again..", "Fred again..", "Delilah (pull me out of this)"},
+		{"'In This Moment' [Ambient Piano CC-BY] - Scott Buckley", "Scott Buckley", "Scott Buckley", "'In This Moment' (Ambient Piano CC-BY)"},
+	}
+	for _, c := range cases {
+		a, ti := ArtistTitle(c.raw, c.fallback)
+		if a != c.artist || ti != c.title {
+			t.Errorf("%q\n  got  %q / %q\n  want %q / %q", c.raw, a, ti, c.artist, c.title)
+		}
+	}
+}

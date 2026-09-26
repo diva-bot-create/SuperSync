@@ -36,8 +36,8 @@ rekordbox it keeps its own library file that rekordbox can import later.
 Commands:
   supersync                         open the web app
   supersync library                 show the library and its playlists
-  supersync import <url>            make a library playlist from a SoundCloud playlist,
-                                    downloading tracks the artists allow
+  supersync import <url>            make (or sync) a library playlist from a SoundCloud or
+                                    YouTube playlist, downloading what you don't have
   supersync download <url>          download a whole SoundCloud or YouTube playlist as mp3s
       --out DIR                     where to put them (default: <music>/SoundCloud|YouTube/<playlist>)
       --missing                     only the tracks you don't already have
@@ -158,10 +158,10 @@ func runCmd(cmd string, args []string) {
 		}
 	case "import":
 		if fs.NArg() != 1 {
-			die("usage: supersync import <soundcloud playlist url>")
+			die("usage: supersync import <soundcloud or youtube playlist url>")
 		}
 		ensureScanned(a)
-		j, err := a.ImportSoundCloud(fs.Arg(0))
+		j, err := a.ImportPlaylist(fs.Arg(0))
 		must(err)
 		shown := map[int]string{}
 		for {
@@ -184,7 +184,11 @@ func runCmd(cmd string, args []string) {
 					fmt.Println("Run `supersync apply` after closing rekordbox.")
 				}
 				if snap.Status == "done" {
-					fmt.Printf("\nAdded to your library as SoundCloud / %s.\n", snap.Title)
+					folder := "SoundCloud"
+					if snap.Source == "youtube" {
+						folder = "YouTube"
+					}
+					fmt.Printf("\nIn your library as %s / %s.\n", folder, snap.Title)
 				}
 				if snap.Status == "error" {
 					os.Exit(1)
@@ -415,7 +419,8 @@ func download(a *app.App, link, dir string, missing bool) {
 	wg.Wait()
 	fmt.Printf("\n%d downloaded · %d already had · %d failed\n", got, kept, failed)
 	if got > 0 {
-		fmt.Println("Stream copies are usually 128 kbps; run `supersync scan` to add them to the library.")
+		fmt.Println("Stream copies are usually 128 kbps. These files aren't in your library yet: use `supersync import <url>`")
+		fmt.Println("(or Add playlist in the app) to download and add a playlist in one go.")
 	}
 }
 
@@ -481,7 +486,8 @@ func downloadYouTube(a *app.App, link, dir string, missing bool) {
 	wg.Wait()
 	fmt.Printf("\n%d downloaded · %d already had · %d failed\n", got, kept, failed)
 	if got > 0 {
-		fmt.Println("These are converted from YouTube's ~128 kbps AAC; run `supersync scan` to add them to the library.")
+		fmt.Println("These are converted from YouTube's ~128 kbps AAC. They aren't in your library yet: use `supersync import <url>`")
+		fmt.Println("(or Add playlist in the app) to download and add a playlist in one go.")
 	}
 }
 

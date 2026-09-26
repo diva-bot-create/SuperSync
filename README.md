@@ -10,8 +10,9 @@ turns SoundCloud playlists into rekordbox playlists in one go.
 - **Quality tiers**: every track is graded **LOW** (under 128 kbps), **NORMAL** (128), **HQ** (256)
   or **UHQ** (over 256 or lossless). Files that were converted up from a worse copy are graded as
   what they really are.
-- **Import a SoundCloud playlist**: SuperSync creates the playlist inside a *SoundCloud* folder in
-  your rekordbox library:
+- **Add a SoundCloud (or YouTube) playlist**: SuperSync creates the playlist inside a *SoundCloud*
+  (or *YouTube*) folder in your rekordbox library and keeps it synced. Its **Download** button
+  picks up tracks added to the playlist since last time:
   - Tracks you already have are linked.
   - Tracks you don't have are downloaded and added: the artist's original file when they turned
     on SoundCloud's download button and you've set your SoundCloud login token, otherwise the
@@ -71,9 +72,11 @@ in your browser, on your rekordbox library.
    - Double-click a track, or press Enter, to play it. Space plays and pauses; keys 1–8 jump to
      hot cues.
    - The chips at the top filter by quality tier.
-3. **Import SoundCloud playlist**: paste a playlist link (secret share links work too). Progress
-   shows track by track. If rekordbox is open, close it and click **Apply** to finish.
-4. In an imported playlist, rows below UHQ, and tracks you don't have yet, show where to get a
+3. **Add SoundCloud playlist**: paste a SoundCloud or YouTube playlist link (secret share links
+   work too). Progress shows track by track. If rekordbox is open, close it and click **Apply** to
+   finish. Synced playlists show a ⟳ SC / ⟳ YT label in the sidebar, which spins while syncing.
+   The **Download** button in a synced playlist's header fetches whatever's new or missing.
+4. In a synced playlist, rows below UHQ, and tracks you don't have yet, show where to get a
    better copy. **⬇ SoundCloud** opens the track's page (log in, then ⋯ → Download file). The other
    buttons go to the free-download page or store the uploader linked.
 5. **Duplicates → Carry over cues**: when the copy you're keeping has no cues but another copy

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,9 @@ import (
 	"time"
 
 	"supersync/internal/audio"
-	"supersync/internal/match"
 	"supersync/internal/rbdb"
 	"supersync/internal/soundcloud"
+	"supersync/internal/youtube"
 )
 
 // ---------------- persistent state ----------------
@@ -31,6 +32,7 @@ type State struct {
 // SCPlaylist links a SoundCloud playlist to a library playlist.
 type SCPlaylist struct {
 	URL        string     `json:"url"`
+	Source     string     `json:"source,omitempty"` // "soundcloud" (default) or "youtube"
 	Title      string     `json:"title"`
 	Owner      string     `json:"owner"`
 	Artwork    string     `json:"artwork,omitempty"`
@@ -111,6 +113,7 @@ type Job struct {
 	Steps      []*JobStep `json:"steps"`
 	Started    time.Time  `json:"started"`
 	PlaylistID string     `json:"playlistId,omitempty"`
+	Source     string     `json:"source,omitempty"`
 }
 
 type JobStep struct {
@@ -133,13 +136,14 @@ type JobView struct {
 	Steps      []*JobStep `json:"steps"`
 	Started    time.Time  `json:"started"`
 	PlaylistID string     `json:"playlistId,omitempty"`
+	Source     string     `json:"source,omitempty"`
 }
 
 // Snapshot is a copy safe to serialize while the job runs.
 func (j *Job) Snapshot() JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	c := JobView{ID: j.ID, Title: j.Title, URL: j.URL, Status: j.Status, Message: j.Message, Started: j.Started, PlaylistID: j.PlaylistID}
+	c := JobView{ID: j.ID, Title: j.Title, URL: j.URL, Status: j.Status, Message: j.Message, Started: j.Started, PlaylistID: j.PlaylistID, Source: j.Source}
 	for _, s := range j.Steps {
 		cp := *s
 		c.Steps = append(c.Steps, &cp)
@@ -161,34 +165,118 @@ func newID() string {
 
 // ---------------- import ----------------
 
-// ImportSoundCloud turns a SoundCloud playlist into a library playlist in
-// one go: tracks already in the library are linked, tracks whose artist
-// enabled SoundCloud's download button are downloaded into the music
-// folder and added, and the rest are listed with their download/buy links.
-func (a *App) ImportSoundCloud(link string) (*Job, error) {
+// remote is a playlist on SoundCloud or YouTube, ready to import.
+type remote struct {
+	kind   string // "soundcloud" or "youtube"
+	folder string // library folder for its playlists
+	pl     *soundcloud.Playlist
+	// canDownload and download act on pl.Tracks[i].
+	canDownload func(i int) bool
+	download    func(i int, dir string, progress soundcloud.Progress) (path string, original bool, err error)
+}
+
+func (a *App) fetchRemote(link string) (*remote, error) {
+	if youtube.IsLink(link) {
+		yt := youtube.New()
+		ypl, err := yt.List(link)
+		if err != nil {
+			return nil, err
+		}
+		r := &remote{kind: "youtube", folder: "YouTube", pl: &soundcloud.Playlist{Title: ypl.Title, URL: link}}
+		for _, e := range ypl.Entries {
+			// The matcher and the playlist view speak SoundCloud tracks; a video fits.
+			r.pl.Tracks = append(r.pl.Tracks, &soundcloud.Track{ID: videoID(e.ID), Title: e.Title,
+				Uploader: e.Artist(), URL: e.URL(), DurationMS: int64(e.Duration * 1000)})
+		}
+		r.canDownload = func(int) bool { return true }
+		r.download = func(i int, dir string, progress soundcloud.Progress) (string, bool, error) {
+			p, err := yt.Download(ypl.Entries[i], dir, progress)
+			return p, false, err
+		}
+		return r, nil
+	}
+	pl, err := a.SC.FetchPlaylist(link)
+	if err != nil {
+		return nil, err
+	}
+	return &remote{kind: "soundcloud", folder: "SoundCloud", pl: pl,
+		canDownload: func(i int) bool { return pl.Tracks[i].CanDownload() },
+		download: func(i int, dir string, progress soundcloud.Progress) (string, bool, error) {
+			return a.SC.Download(pl.Tracks[i], dir, a.Cfg.SCToken, progress)
+		}}, nil
+}
+
+// videoID turns a YouTube video ID into a stable number for bookkeeping
+// (SoundCloud track IDs are numbers; these can't collide with them in practice).
+func videoID(id string) int64 {
+	h := fnv.New64a()
+	h.Write([]byte(id))
+	return int64(h.Sum64() >> 1)
+}
+
+// ImportPlaylist turns a SoundCloud or YouTube playlist into a library
+// playlist in one go: tracks already in the library are linked, the rest are
+// downloaded into the music folder and added, and anything that can't be
+// downloaded is listed with its download/buy links. Running it again for the
+// same link syncs: only what's new is downloaded and added.
+func (a *App) ImportPlaylist(link string) (*Job, error) {
 	if a.Src == nil {
 		return nil, ErrNoSource
 	}
 	if a.Cfg.MusicDir == "" {
 		return nil, errors.New("choose a download folder in Settings first")
 	}
-	j := &Job{ID: newID(), URL: link, Status: "fetching", Started: time.Now()}
+	link = strings.TrimSpace(link)
+	if sp := a.scByURLLocked(link); sp != nil {
+		link = sp.URL // same spelling as before, so the sync finds its playlist
+	}
 	a.mu.Lock()
+	for _, j := range a.jobs {
+		if j.URL == link && j.running() {
+			a.mu.Unlock()
+			return j, nil // already syncing: show that job
+		}
+	}
+	j := &Job{ID: newID(), URL: link, Status: "fetching", Started: time.Now()}
 	a.jobs[j.ID] = j
 	a.mu.Unlock()
 	go a.runImport(j, link)
 	return j, nil
 }
 
+// Syncing lists the links being imported or synced right now.
+func (a *App) Syncing() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []string
+	for _, j := range a.jobs {
+		if j.running() {
+			out = append(out, j.URL)
+		}
+	}
+	return out
+}
+
+func (j *Job) running() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	switch j.Status {
+	case "done", "error", "waiting":
+		return false
+	}
+	return true
+}
+
 func (a *App) runImport(j *Job, link string) {
 	fail := func(err error) { j.set(func() { j.Status, j.Message = "error", err.Error() }) }
-	pl, err := a.SC.FetchPlaylist(link)
+	rm, err := a.fetchRemote(link)
 	if err != nil {
 		fail(err)
 		return
 	}
+	pl := rm.pl
 	j.set(func() {
-		j.Title, j.Status = pl.Title, "matching"
+		j.Title, j.Status, j.Source = pl.Title, "matching", rm.kind
 		for i, t := range pl.Tracks {
 			j.Steps = append(j.Steps, &JobStep{N: i + 1, Title: t.Title, State: "queued"})
 		}
@@ -199,14 +287,11 @@ func (a *App) runImport(j *Job, link string) {
 		return
 	}
 	res := a.Compare(pl, lib)
-	scp := &SCPlaylist{URL: link, Title: pl.Title, Owner: pl.Owner, ImportedAt: time.Now()}
-	if len(pl.Tracks) > 0 {
-		scp.Artwork = pl.Tracks[0].Artwork
-		for _, t := range pl.Tracks {
-			if t.Artwork != "" {
-				scp.Artwork = t.Artwork
-				break
-			}
+	scp := &SCPlaylist{URL: link, Source: rm.kind, Title: pl.Title, Owner: pl.Owner, ImportedAt: time.Now()}
+	for _, t := range pl.Tracks {
+		if t.Artwork != "" {
+			scp.Artwork = t.Artwork
+			break
 		}
 	}
 	for i, row := range res.Rows {
@@ -238,9 +323,9 @@ func (a *App) runImport(j *Job, link string) {
 		scp.Entries = append(scp.Entries, e)
 	}
 
-	// Download what the artists allow, three at a time.
+	// Download the rest, three at a time.
 	j.set(func() { j.Status = "downloading" })
-	dir := filepath.Join(a.Cfg.MusicDir, "SoundCloud", soundcloud.SafeFilename(pl.Title))
+	dir := filepath.Join(a.Cfg.MusicDir, rm.folder, soundcloud.SafeFilename(pl.Title))
 	sem := make(chan struct{}, 3)
 	var wg sync.WaitGroup
 	for i, e := range scp.Entries {
@@ -248,17 +333,17 @@ func (a *App) runImport(j *Job, link string) {
 		if e.Status != "missing" || e.SC.Unavailable {
 			continue
 		}
-		if !e.SC.CanDownload() {
+		if !rm.canDownload(i) {
 			j.set(func() { step.State, step.Note = "skipped", noDownloadNote(e.SC) })
 			continue
 		}
 		wg.Add(1)
-		go func(e *SCEntry, step *JobStep) {
+		go func(i int, e *SCEntry, step *JobStep) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			j.set(func() { step.State = "downloading" })
-			path, original, err := a.SC.Download(e.SC, dir, a.Cfg.SCToken, func(done, total int64) {
+			path, original, err := rm.download(i, dir, func(done, total int64) {
 				j.set(func() {
 					if total > 0 {
 						step.Progress = float64(done) / float64(total)
@@ -273,17 +358,17 @@ func (a *App) runImport(j *Job, link string) {
 				return
 			}
 			e.Status, e.File = "downloaded", path
-			note := "MP3 stream"
+			note := "stream copy"
 			if original {
 				note = "original file"
 			}
 			j.set(func() { step.State, step.Note, step.Progress = "downloaded", note, 1 })
-		}(e, step)
+		}(i, e, step)
 	}
 	wg.Wait()
 
-	// One change: the playlist in a "SoundCloud" folder with everything we have.
-	ch := &Change{ID: newID(), Label: "SoundCloud: " + pl.Title, Folder: "SoundCloud", Playlist: pl.Title, SCURL: link, CreatedAt: time.Now()}
+	// One change: the playlist in the source's folder with everything we have.
+	ch := &Change{ID: newID(), Label: rm.folder + ": " + pl.Title, Folder: rm.folder, Playlist: pl.Title, SCURL: link, CreatedAt: time.Now()}
 	for _, e := range scp.Entries {
 		switch {
 		case e.TrackID != "":
@@ -293,11 +378,13 @@ func (a *App) runImport(j *Job, link string) {
 			if err != nil {
 				continue
 			}
-			ch.Items = append(ch.Items, ChangeItem{New: newTrack(in, e.SC.Title, scArtist(e.SC)), SCID: e.SC.ID})
+			artist, title := e.SC.ArtistTitle()
+			ch.Items = append(ch.Items, ChangeItem{New: newTrack(in, title, artist), SCID: e.SC.ID})
 		}
 	}
 	a.State.mu.Lock()
 	if old := a.scByURL(link); old != nil {
+		scp.PlaylistID = old.PlaylistID // keep the link to the library playlist while syncing
 		*old = *scp
 		scp = old
 	} else {
@@ -319,6 +406,17 @@ func (a *App) runImport(j *Job, link string) {
 	j.set(func() { j.Status, j.PlaylistID = "done", scp.PlaylistID })
 }
 
+func (a *App) scByURLLocked(u string) *SCPlaylist {
+	a.State.mu.Lock()
+	defer a.State.mu.Unlock()
+	for _, p := range a.State.SCPlaylists {
+		if strings.EqualFold(strings.TrimRight(p.URL, "/"), strings.TrimRight(u, "/")) {
+			return p
+		}
+	}
+	return nil
+}
+
 func noDownloadNote(t *soundcloud.Track) string {
 	switch {
 	case t.Downloadable && !t.DownloadsLeft:
@@ -329,20 +427,6 @@ func noDownloadNote(t *soundcloud.Track) string {
 		return "Available on " + t.Links[0].Label
 	}
 	return "Not offered for download"
-}
-
-// scArtist picks the artist for a SoundCloud track: from "Artist - Title",
-// else the publisher's artist field, else the uploader.
-func scArtist(t *soundcloud.Track) string {
-	if keys := match.Parse("", t.Title); len(keys) > 0 && len(keys[0].Artist) > 0 {
-		if a, _, ok := strings.Cut(t.Title, " - "); ok {
-			return strings.TrimSpace(a)
-		}
-	}
-	if t.Artist != "" {
-		return t.Artist
-	}
-	return t.Uploader
 }
 
 // newTrack describes a file for the library, preferring its own tags.

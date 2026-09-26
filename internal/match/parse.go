@@ -46,7 +46,8 @@ var stopwords = set("the", "a", "an", "feat", "ft", "featuring", "and", "x", "vs
 var junkRe = regexp.MustCompile(`(?i)\b(free\s*(download|dl)|out\s*now|premiere|exclusive|` +
 	`buy\s*=\s*free(\s*(download|dl))?|click\s*buy|download\s*link|free\s*track|` +
 	`supported\s*by\s*[^\]\)]*|official\s*(audio|video|music video)|lyric\s*video|` +
-	`hi[\s-]?res|clip|visuali[sz]er|\d+\s*k\s*(followers|special))\b`)
+	`hi[\s-]?res|clip|visuali[sz]er|\d+\s*k\s*(followers|special)|creative\s*commons|` +
+	`no\s*copyright(\s*music)?|copyright\s*free|royalty\s*free|(background\s+)?music\s+for\s+(youtube\s+)?videos|ncs\s*release)\b`)
 
 var bracketRe = regexp.MustCompile(`[\(\[\{【（][^\)\]\}】）]*[\)\]\}】）]`)
 var featRe = regexp.MustCompile(`(?i)\s(feat\.?|ft\.?|featuring)\s.*$`)
@@ -156,7 +157,8 @@ var fillerWords = set("house", "tech", "techno", "bass", "deep", "afro", "melodi
 	"minimal", "club", "remix", "remixes", "edit", "edits", "bootleg", "bootlegs", "mashup", "mashups",
 	"mushups", "free", "dl", "download", "premiere", "exclusive", "out", "now", "dnb", "drum", "garage",
 	"ukg", "uk", "dubstep", "trance", "disco", "nu", "music", "electronic", "dance", "edm", "hardstyle",
-	"jersey", "baile", "funk", "amapiano", "jungle", "breaks", "ibiza", "hard", "latin", "organic")
+	"jersey", "baile", "funk", "amapiano", "jungle", "breaks", "ibiza", "hard", "latin", "organic",
+	"official", "audio", "video", "visualizer", "visualiser", "lyric", "lyrics", "hd", "hq", "4k", "stream")
 
 func onlyFiller(seg string) bool {
 	for _, w := range Tokens(junkRe.ReplaceAllString(seg, " ")) {
@@ -316,4 +318,105 @@ func SearchQuery(keys []Key) string {
 	parts = append(parts, pick.Title...)
 	parts = append(parts, pick.Version...)
 	return strings.Join(parts, " ")
+}
+
+// ArtistTitle splits an upload's title into artist and title the way
+// uploaders write them ("Artist - Title", "Tech House | Artist - Title [FREE DL]",
+// "PREMIERE: Artist - Title"), cleaned up for display: promo and genre tags are
+// dropped, version info like "(Extended Mix)" and "(feat. X)" is kept. With no
+// "Artist - Title" dash, fallback (the publisher's artist, uploader or channel)
+// is the artist.
+func ArtistTitle(raw, fallback string) (artist, title string) {
+	s := cleanTitle(raw)
+	if strings.Contains(s, "|") {
+		var keep []string
+		for _, seg := range strings.Split(s, "|") {
+			if !onlyFiller(seg) {
+				keep = append(keep, strings.TrimSpace(seg))
+			}
+		}
+		for _, seg := range keep {
+			if dashRe.MatchString(seg) {
+				keep = []string{seg}
+				break
+			}
+		}
+		s = strings.Join(keep, " - ")
+	}
+	// The uploader's display name: "MediaCharger - Music For YouTube Videos" -> "MediaCharger".
+	fb := strings.TrimSpace(fallback)
+	if loc := dashRe.FindStringIndex(fb); loc != nil && loc[0] > 0 {
+		fb = fb[:loc[0]]
+	}
+	fb = displayClean(fb)
+	channel := set(Tokens(fallback)...)
+
+	// Dash segments: drop promo-only ones, and ones that just name the
+	// uploader ("Song - Mediacharger", "Waitz - Track"), remembering that the
+	// uploader is then the artist.
+	segs := dashRe.Split(s, -1)
+	var keep []string
+	named := false
+	for _, seg := range segs {
+		c := displayClean(seg)
+		if c == "" || onlyFiller(c) {
+			continue
+		}
+		if len(segs) > 1 && subsetOf(Tokens(c), channel) {
+			named = true
+			continue
+		}
+		keep = append(keep, c)
+	}
+	switch {
+	case len(keep) == 0:
+		artist, title = fb, displayClean(s)
+	case named || len(keep) == 1:
+		artist, title = fb, strings.Join(keep, " - ")
+	default:
+		artist, title = keep[0], strings.Join(keep[1:], " - ")
+	}
+	if artist == "" {
+		artist = fb
+	}
+	if title == "" {
+		title = strings.TrimSpace(raw)
+	}
+	return artist, title
+}
+
+func subsetOf(toks []string, m map[string]bool) bool {
+	if len(toks) == 0 || len(m) == 0 {
+		return false
+	}
+	for _, t := range toks {
+		if !m[t] {
+			return false
+		}
+	}
+	return true
+}
+
+var starRe = regexp.MustCompile(`\*+`)
+var spaceRe = regexp.MustCompile(`\s{2,}`)
+
+// displayClean removes promo brackets and phrases but keeps the casing and
+// any version or featuring brackets.
+func displayClean(s string) string {
+	s = bracketRe.ReplaceAllStringFunc(s, func(g string) string {
+		_, open := utf8.DecodeRuneInString(g)
+		_, close := utf8.DecodeLastRuneInString(g)
+		inner := strings.TrimSpace(g[open : len(g)-close])
+		// Drop brackets that are only promo ("[Free Download]", "(Official Audio)",
+		// "[OUT NOW]"); keep everything else, including parts of the real title.
+		if onlyFiller(inner) || strings.TrimSpace(nonWord.ReplaceAllString(inner, "")) == "" {
+			return " "
+		}
+		return " (" + inner + ")"
+	})
+	s = junkRe.ReplaceAllString(s, " ")
+	s = starRe.ReplaceAllString(s, " ")
+	s = spaceRe.ReplaceAllString(s, " ")
+	s = strings.ReplaceAll(s, "( ", "(")
+	return strings.Trim(strings.TrimSpace(s), "-–—|:~ ")
 }

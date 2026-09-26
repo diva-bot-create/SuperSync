@@ -215,6 +215,14 @@ main { padding-bottom: calc(var(--player) + 40px); }
 .tnode.open .chev { transform: rotate(90deg); }
 .tkids { overflow: hidden; padding-left: 14px; }
 .tkids.closed { display: none; }
+.sync { font-size: 10px; font-weight: 700; letter-spacing: .03em; color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; display: inline-flex; gap: 4px; align-items: center; flex: none; }
+.sync.yt { color: #ff4d4d; background: color-mix(in srgb, #ff4d4d 14%, transparent); }
+.sync .ring { display: inline-block; transition: transform .3s; }
+.sync.on .ring { animation: s 1s linear infinite; }
+#syncBtn { flex: none; }
+.syncbar { height: 2px; margin: 0 24px; border-radius: 1px; background: transparent; overflow: hidden; opacity: 0; transition: opacity .4s; }
+.syncbar.on { opacity: 1; background: var(--line); }
+.syncbar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .5s var(--ease); }
 .scbadge { font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: 0 5px; }
 
 .libmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -431,7 +439,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   <section data-panel="library" class="libview">
     <aside class="side">
       <div class="src" id="srcBox"></div>
-      <button class="primary import" id="importBtn"><span aria-hidden="true">⬇</span> Import SoundCloud playlist</button>
+      <button class="primary import" id="importBtn"><span aria-hidden="true">＋</span> Add SoundCloud playlist</button>
       <div class="pendbox hidden" id="pendBox"></div>
       <div class="tree" id="tree"></div>
     </aside>
@@ -442,8 +450,10 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
           <div class="lmeta" id="plMeta"></div>
         </div>
         <div class="tiers" id="tierChips"></div>
+        <button class="hidden" id="syncBtn"></button>
         <input type="text" id="search" placeholder="Search…" autocomplete="off" spellcheck="false">
       </div>
+      <div class="syncbar" id="syncBar"><i></i></div>
       <div class="thead" id="thead"><span class="c-n">#</span><span>Title</span><span class="c-bpm">BPM</span><span class="c-key">Key</span><span class="c-time">Time</span><span class="c-q">Quality</span><span class="c-get"></span></div>
       <div class="vlist" id="vlist" tabindex="0"><div class="vspace" id="vspace"></div></div>
     </div>
@@ -507,7 +517,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
       </div>
       <div class="panel setting">
         <h3>SoundCloud login <span class="muted" style="font-weight:400">(optional)</span></h3>
-        <div class="muted">SuperSync only downloads tracks whose artist has turned on SoundCloud's download button. Without a login it saves the MP3 stream. With your login token it gets the artist's original upload instead, which is often a WAV.</div>
+        <div class="muted">Without a login, downloads are SoundCloud's stream (usually 128 kbps). With your login token, tracks whose artist turned on SoundCloud's download button come down as the artist's original upload instead, which is often a WAV.</div>
         <ol class="steps">
           <li>In your browser, log in at soundcloud.com.</li>
           <li>Open the developer tools (⌥⌘I on Mac, F12 on Windows) → <b>Application</b> (Chrome) or <b>Storage</b> (Firefox/Safari) → <b>Cookies</b> → <b>https://soundcloud.com</b>.</li>
@@ -554,7 +564,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
 </dialog>
 
 <dialog id="importDlg">
-  <div class="dlg-h" id="impTitle">Import a SoundCloud playlist</div>
+  <div class="dlg-h" id="impTitle">Add a SoundCloud playlist</div>
   <div class="dlg-b" id="impBody"></div>
   <div class="dlg-f"><span class="grow muted" id="impFoot" style="font-size:12.5px;align-self:center"></span><button id="impClose">Close</button><button class="primary" id="impGo">Import</button></div>
 </dialog>
@@ -877,7 +887,7 @@ async function refresh() {
   setVal($("#srcVal"), src ? `${src.kind === "rekordbox" ? "rekordbox" : "SuperSync's own library"}: ${src.path}` : (S.sourceErr || "Not found"));
   $("#srcNote").textContent = src?.note || (S.sourceErr ? S.sourceErr : "SuperSync works directly on rekordbox's own library, found automatically.");
   $("#addFolder").classList.toggle("hidden", src?.kind !== "supersync");
-  $("#tokenState").textContent = S.hasToken ? "Saved. Downloads use the artist's original file where SoundCloud allows it." : "Not set. Downloads use the MP3 stream.";
+  $("#tokenState").textContent = S.hasToken ? "Saved. Downloads use the artist's original file where SoundCloud allows it." : "Not set. Downloads use the stream.";
   $("#minKbps").value = String(S.minKbps);
   const undo = $("#undoBtn");
   if (!!S.quarantined === undo.classList.contains("hidden")) {
@@ -886,6 +896,7 @@ async function refresh() {
   }
   undo.textContent = `Restore moved files (${S.quarantined})`;
   renderPending();
+  paintSyncLabels();
   if (libData && src) {
     const wasRunning = libData.source.running;
     libData.source.running = src.running;
@@ -978,26 +989,38 @@ function renderSource() {
     <div class="n">${s.tracks.toLocaleString()} tracks · ${s.playlists} playlist${s.playlists === 1 ? "" : "s"}${s.running ? " · rekordbox is open" : ""}</div>`;
 }
 
+function syncLabel(source, url) {
+  const yt = source === "youtube";
+  const on = (S.syncing || []).includes(url) || syncing.has(url);
+  return `<span class="sync ${yt ? "yt" : ""} ${on ? "on" : ""}" title="${on ? "Syncing now" : "Synced from " + (yt ? "YouTube" : "SoundCloud")}"><span class="ring">⟳</span>${yt ? "YT" : "SC"}</span>`;
+}
 function renderTree() {
   const open = store.get("open", {});
-  const node = (p, depth) => {
+  const node = p => {
     const cnt = p.kind === "folder" ? "" : `<span class="ct">${p.count}</span>`;
-    const ic = p.kind === "folder" ? "" : p.kind === "smart" ? "✦" : p.sc ? "☁" : "♪";
+    const ic = p.kind === "folder" ? "" : p.kind === "smart" ? "✦" : "♪";
     if (p.kind === "folder") {
       const isOpen = open[p.id] !== false;
       return `<button class="tnode ${isOpen ? "open" : ""}" data-folder="${esc(p.id)}"><span class="chev">▶</span><span class="nm">${esc(p.name)}</span></button>
-        <div class="tkids ${isOpen ? "" : "closed"}" data-kids="${esc(p.id)}">${(p.children || []).map(c => node(c, depth + 1)).join("")}</div>`;
+        <div class="tkids ${isOpen ? "" : "closed"}" data-kids="${esc(p.id)}">${(p.children || []).map(node).join("")}</div>`;
     }
-    return `<button class="tnode" data-pl="${esc(p.id)}" ${p.kind === "smart" ? 'disabled title="Smart playlists are shown in rekordbox"' : ""}><span class="ic">${ic}</span><span class="nm">${esc(p.name)}</span>${cnt}</button>`;
+    return `<button class="tnode" data-pl="${esc(p.id)}" ${p.kind === "smart" ? 'disabled title="Smart playlists are shown in rekordbox"' : ""}><span class="ic">${ic}</span><span class="nm">${esc(p.name)}</span>${p.sc ? syncLabel(p.source, p.sc) : ""}${cnt}</button>`;
   };
-  const scNodes = [];
-  const walk = ps => (ps || []).forEach(p => { if (p.sc) scNodes.push(p); walk(p.children); });
-  walk(libData.playlists);
-  const pend = (libData.pendingSC || []).map(p => `<button class="tnode" data-pl="sc:${esc(p.url)}"><span class="ic">☁</span><span class="nm">${esc(p.title)}</span><span class="scbadge" title="Waiting for rekordbox to close">PENDING</span></button>`);
+  const pend = (libData.pendingSC || []).map(p => `<button class="tnode" data-pl="sc:${esc(p.url)}" title="Waiting for rekordbox to close"><span class="ic">♪</span><span class="nm">${esc(p.title)}</span>${syncLabel(p.source, p.url)}<span class="scbadge">PENDING</span></button>`);
   $("#tree").innerHTML = `<button class="tnode" data-pl="all"><span class="ic">◉</span><span class="nm">Collection</span><span class="ct">${libData.source.tracks.toLocaleString()}</span></button>`
-    + (scNodes.length || pend.length ? `<div class="tsec">From SoundCloud</div>` + scNodes.map(p => node(p, 0)).join("") + pend.join("") : "")
-    + `<div class="tsec">Playlists</div>` + ((libData.playlists || []).map(p => node(p, 0)).join("") || `<div class="muted" style="padding:6px 8px;font-size:12.5px">No playlists yet.</div>`);
+    + `<div class="tsec">Playlists</div>` + ((libData.playlists || []).map(node).join("") + pend.join("") || `<div class="muted" style="padding:6px 8px;font-size:12.5px">No playlists yet.</div>`);
   markCurrent();
+}
+// Update just the sync labels (spinning while a sync runs) without rebuilding the tree.
+function paintSyncLabels() {
+  $$("#tree .sync").forEach(el => {
+    const b = el.closest("[data-pl]"), id = b?.dataset.pl;
+    let url = id?.startsWith("sc:") ? id.slice(3) : null;
+    if (!url) { const walk = ps => (ps || []).forEach(p => { if (p.id === id) url = p.sc; walk(p.children); }); walk(libData?.playlists); }
+    const on = !!url && ((S.syncing || []).includes(url) || syncing.has(url));
+    el.classList.toggle("on", on);
+    el.title = on ? "Syncing now" : el.classList.contains("yt") ? "Synced from YouTube" : "Synced from SoundCloud";
+  });
 }
 function markCurrent() { $$("#tree [data-pl]").forEach(b => b.setAttribute("aria-current", b.dataset.pl === cur.id)); }
 
@@ -1044,6 +1067,7 @@ async function openList(id, { quiet = false } = {}) {
   cur.data = data;
   if (changed) { tierFilter = null; $("#search").value = ""; selIdx = -1; }
   renderListHead(changed);
+  showSyncBar(data.sc ? syncing.get(data.sc.url) : null);
   applyFilter(changed && !quiet, keepScroll);
 }
 
@@ -1053,9 +1077,10 @@ function renderListHead(animate) {
   const total = d.rows.reduce((a, r) => a + (r.length || 0), 0);
   const notIn = d.rows.filter(r => !r.id).length;
   let meta = `${d.rows.length.toLocaleString()} track${d.rows.length === 1 ? "" : "s"} · ${Math.floor(total / 3600) ? Math.floor(total / 3600) + " h " : ""}${Math.round(total % 3600 / 60)} min`;
-  if (d.sc) meta += ` · from <a href="${esc(d.sc.url)}" target="_blank" rel="noopener">SoundCloud</a>${notIn ? ` · ${notIn} not in your library` : ""}${d.sc.pending ? " · waiting for rekordbox to close" : ""}`;
+  if (d.sc) meta += ` · synced from <a href="${esc(d.sc.url)}" target="_blank" rel="noopener">${d.sc.source === "youtube" ? "YouTube" : "SoundCloud"}</a>${notIn ? ` · ${notIn} not in your library` : ""}${d.sc.pending ? " · waiting for rekordbox to close" : ""}`;
   $("#plMeta").innerHTML = meta;
   $(".libmain").classList.toggle("sc", !!d.sc);
+  renderSyncBtn(animate);
   const tiers = ["low", "normal", "hq", "uhq"].filter(t => d.tiers[t]);
   $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
     + (notIn ? `<button class="tier none" data-tier="missing" aria-pressed="${tierFilter === "missing"}" title="SoundCloud tracks not in your library yet">NEED ${notIn}</button>` : "");
@@ -1070,6 +1095,65 @@ $("#tierChips").addEventListener("click", e => {
 });
 let searchTimer;
 $("#search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => applyFilter(false), 90); });
+
+// ---------- syncing a playlist from SoundCloud / YouTube ----------
+const syncing = new Map(); // url -> job
+function renderSyncBtn(animate) {
+  const b = $("#syncBtn"), sc = cur.data?.sc;
+  if (!sc) { b.classList.add("hidden"); return; }
+  const job = syncing.get(sc.url);
+  const need = cur.data.rows.filter(r => !r.id).length;
+  let html;
+  if (job) {
+    const steps = job.steps || [], total = steps.length;
+    const doneN = steps.filter(x => !["queued", "downloading"].includes(x.state)).length;
+    html = `<span class="spin"></span>${job.status === "fetching" ? "Checking" : job.status === "applying" ? "Adding" : `Downloading ${doneN}/${total}`}`;
+  } else html = need ? `⬇ Download ${need} missing` : "⟳ Sync";
+  const wasHidden = b.classList.contains("hidden");
+  b.classList.remove("hidden");
+  b.classList.toggle("primary", !job && need > 0);
+  b.disabled = !!job;
+  b.title = job ? "Syncing…" : `Download what's new or missing from ${sc.source === "youtube" ? "YouTube" : "SoundCloud"} and add it to this playlist`;
+  if (b.innerHTML !== html) morphButton(b, html);
+  if (wasHidden && animate) anim(b, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
+}
+$("#syncBtn").onclick = () => { const sc = cur.data?.sc; if (sc) startSync(sc.url); };
+
+async function startSync(url) {
+  if (!S.musicDir) { toast("Choose a download folder in Settings first.", "err"); selectTab("settings"); return; }
+  let job;
+  try { job = await api("sc/import", { url }); } catch (e) { toast(e.message, "err"); return; }
+  syncing.set(url, job);
+  setBusy(+1);
+  paintSyncLabels(); renderSyncBtn(); showSyncBar(job);
+  const poll = async () => {
+    try { job = await api("jobs/" + job.id); } catch (e) { syncing.delete(url); setBusy(-1); toast(e.message, "err"); return; }
+    syncing.set(url, job);
+    if (cur.data?.sc?.url === url) { renderSyncBtn(); showSyncBar(job); }
+    if (["done", "error", "waiting"].includes(job.status)) {
+      syncing.delete(url); setBusy(-1);
+      const got = (job.steps || []).filter(x => x.state === "downloaded").length;
+      if (job.status === "done") toast(got ? `Downloaded and added ${got} track${got === 1 ? "" : "s"} to “${job.title}”.` : `“${job.title}” is up to date.`, "ok");
+      else if (job.status === "waiting") toast(job.message);
+      else toast(job.message || "Sync failed", "err");
+      showSyncBar(null);
+      await loadLibrary();
+      if (cur.data?.sc?.url === url) openList(job.playlistId || cur.id, { quiet: true });
+      refresh();
+      return;
+    }
+    setTimeout(poll, 500);
+  };
+  poll();
+}
+function showSyncBar(job) {
+  const bar = $("#syncBar");
+  if (!job || cur.data?.sc?.url !== job.url) { bar.classList.remove("on"); $("i", bar).style.width = "0"; return; }
+  const steps = job.steps || [], total = steps.length || 1;
+  const doneN = steps.filter(x => !["queued", "downloading"].includes(x.state)).length;
+  bar.classList.add("on");
+  $("i", bar).style.width = (job.status === "fetching" ? 4 : doneN / total * 100) + "%";
+}
 
 function applyFilter(animate, keepScroll) {
   const q = $("#search").value.trim().toLowerCase();
@@ -1406,18 +1490,19 @@ let importJob = null, jobTimer = null;
 $("#importBtn").onclick = () => {
   const d = $("#importDlg");
   clearTimeout(jobTimer); importJob = null;
-  $("#impTitle").textContent = "Import a SoundCloud playlist";
-  $("#impBody").innerHTML = `<p class="muted" style="margin-top:0">SuperSync makes a playlist from it in your library, inside a <b>SoundCloud</b> folder:</p>
+  $("#impTitle").textContent = "Add a SoundCloud playlist";
+  $("#impBody").innerHTML = `<p class="muted" style="margin-top:0">SuperSync adds it to your library as a playlist that stays synced: click <b>Download</b> on it later to pick up new tracks.</p>
     <ul class="steps" style="margin:0 0 14px">
-      <li>tracks you already have are added as they are;</li>
-      <li>tracks whose artist turned on SoundCloud's download button are downloaded to <span class="mono">${esc(S.musicDir || "your download folder")}</span> and added;</li>
-      <li>everything else is listed with its free-download or buy link, so you can grab a copy yourself.</li>
+      <li>Tracks you already have are added as they are.</li>
+      <li>Tracks you don't have are downloaded to <span class="mono">${esc(S.musicDir || "your download folder")}</span> and added. When the artist offers a download and you've saved your SoundCloud login, that's their original file. Otherwise it's the stream (usually 128 kbps, marked NORMAL so you know it's worth upgrading).</li>
+      <li>Anything that can't be downloaded is listed with its free-download or buy link.</li>
     </ul>
     <input type="text" id="impUrl" placeholder="https://soundcloud.com/you/sets/friday-night" autocomplete="off" spellcheck="false" style="width:100%;font-size:15px;padding:12px 14px">
+    <div class="muted" style="font-size:12.5px;margin-top:8px">YouTube playlist links work too (saved as ~128 kbps audio converted to MP3).</div>
     ${S.source?.running ? `<div class="warn" style="margin-top:10px">rekordbox is open. SuperSync can download now, then add the playlist when you close rekordbox.</div>` : ""}`;
   $("#impFoot").textContent = S.hasToken ? "Using your SoundCloud login for original files." : "";
   $("#impGo").disabled = false;
-  morphButton($("#impGo"), "Import");
+  morphButton($("#impGo"), "Add playlist");
   $("#impGo").onclick = startImport;
   openDlg(d);
   setTimeout(() => $("#impUrl")?.focus(), 80);
@@ -1432,7 +1517,7 @@ async function startImport() {
   $("#impGo").disabled = true;
   morphButton($("#impGo"), '<span class="spin"></span>Starting');
   let job;
-  try { job = await api("sc/import", { url }); } catch (e) { toast(e.message, "err"); $("#impGo").disabled = false; morphButton($("#impGo"), "Import"); return; }
+  try { job = await api("sc/import", { url }); } catch (e) { toast(e.message, "err"); $("#impGo").disabled = false; morphButton($("#impGo"), "Add playlist"); return; }
   importJob = job;
   setBusy(+1);
   await smoothHeight($("#importDlg"), () => {
@@ -1450,14 +1535,14 @@ async function pollJob() {
   jobTimer = setTimeout(pollJob, 450);
 }
 function renderJob(j) {
-  $("#impTitle").textContent = j.title ? "Importing " + j.title : "Importing…";
+  $("#impTitle").textContent = j.title ? "Adding " + j.title : "Adding…";
   const c = {};
   j.steps?.forEach(s => c[s.state] = (c[s.state] || 0) + 1);
   const total = j.steps?.length || 0, fin = total - (c.queued || 0) - (c.downloading || 0);
   $("#jBar").style.width = (j.status === "fetching" ? 3 : total ? fin / total * 100 : 0) + "%";
   const chip = (k, cls, label) => c[k] ? `<span class="tier ${cls}">${label} ${c[k]}</span>` : "";
-  $("#jSum").innerHTML = chip("have", "uhq", "IN LIBRARY") + chip("downloaded", "hq", "DOWNLOADED") + chip("downloading", "normal", "DOWNLOADING") + chip("maybe", "normal", "MAYBE") + chip("skipped", "none", "NOT DOWNLOADABLE") + chip("failed", "low", "FAILED");
-  const msg = { fetching: "Reading the playlist from SoundCloud…", matching: "Matching against your library…", downloading: "Downloading the tracks artists allow…", applying: "Adding the playlist to your library…" }[j.status] || j.message || "";
+  $("#jSum").innerHTML = chip("have", "uhq", "IN LIBRARY") + chip("downloaded", "hq", "DOWNLOADED") + chip("downloading", "normal", "DOWNLOADING") + chip("maybe", "normal", "MAYBE") + chip("skipped", "none", "NO DOWNLOAD") + chip("failed", "low", "FAILED");
+  const msg = { fetching: `Reading the playlist from ${j.source === "youtube" ? "YouTube" : "SoundCloud"}…`, matching: "Matching against your library…", downloading: "Downloading the tracks you don't have…", applying: "Adding the playlist to your library…" }[j.status] || j.message || "";
   $("#jMsg").textContent = msg;
   // Show the interesting ones first: active, then done, then skipped.
   const order = { downloading: 0, failed: 1, downloaded: 2, have: 3, maybe: 4, queued: 5, skipped: 6 };
@@ -1471,7 +1556,7 @@ function finishJob(j) {
   go.disabled = false;
   if (j.status === "done") {
     toast(`Added “${j.title}” to your library.`, "ok");
-    $("#jMsg").textContent = "Done. The playlist is in your library under SoundCloud.";
+    $("#jMsg").textContent = `Done. The playlist is in your library under ${j.source === "youtube" ? "YouTube" : "SoundCloud"}.`;
     morphButton(go, "Open playlist");
     go.onclick = async () => { await closeDlg($("#importDlg")); selectTab("library"); await loadLibrary(); openList(j.playlistId); };
     loadLibrary();

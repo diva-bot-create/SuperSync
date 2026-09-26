@@ -71,12 +71,13 @@ func (s *server) routes(mux *http.ServeMux) {
 			if p.PlaylistID != "" {
 				sc[p.PlaylistID] = p
 			} else if p.Pending {
-				pendingSC = append(pendingSC, map[string]any{"url": p.URL, "title": p.Title, "count": len(p.Entries)})
+				pendingSC = append(pendingSC, map[string]any{"url": p.URL, "title": p.Title, "count": len(p.Entries), "source": source(p)})
 			}
 		}
 		type node struct {
 			*rbdb.Playlist
-			SC       string  `json:"sc,omitempty"` // SoundCloud URL when imported from there
+			SC       string  `json:"sc,omitempty"`     // SoundCloud/YouTube link it syncs from
+			Source   string  `json:"source,omitempty"` // "soundcloud" or "youtube"
 			Children []*node `json:"children,omitempty"`
 		}
 		var conv func(ps []*rbdb.Playlist) []*node
@@ -85,7 +86,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			for _, p := range ps {
 				n := &node{Playlist: p, Children: conv(p.Children)}
 				if l := sc[p.ID]; l != nil {
-					n.SC = l.URL
+					n.SC, n.Source = l.URL, source(l)
 				}
 				out = append(out, n)
 			}
@@ -146,7 +147,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			reply(w, nil, errors.New("still scanning your library — try again in a moment"))
 			return
 		}
-		j, err := a.ImportSoundCloud(req.URL)
+		j, err := a.ImportPlaylist(req.URL)
 		if err != nil {
 			reply(w, nil, err)
 			return
@@ -290,6 +291,13 @@ func (s *server) routes(mux *http.ServeMux) {
 		l, err := browse(r.URL.Query().Get("dir"), r.URL.Query().Get("ext"))
 		reply(w, l, err)
 	})
+}
+
+func source(p *app.SCPlaylist) string {
+	if p.Source == "" {
+		return "soundcloud"
+	}
+	return p.Source
 }
 
 func orStr(s, d string) string {
@@ -481,6 +489,7 @@ type state struct {
 	ScanErr     string          `json:"scanErr,omitempty"`
 	Quarantined int             `json:"quarantined"`
 	Pending     []*app.Change   `json:"pending"`
+	Syncing     []string        `json:"syncing"` // links being imported/synced now
 }
 
 func (s *server) state() state {
@@ -489,6 +498,9 @@ func (s *server) state() state {
 		SourceErr: a.SrcErr, Quarantined: a.Quarantined(), Pending: a.PendingChanges()}
 	if st.Pending == nil {
 		st.Pending = []*app.Change{}
+	}
+	if st.Syncing = a.Syncing(); st.Syncing == nil {
+		st.Syncing = []string{}
 	}
 	if a.Src != nil {
 		info := a.Src.Info()

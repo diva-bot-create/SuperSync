@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"supersync/internal/match"
 )
 
 type Entry struct {
@@ -326,8 +328,9 @@ func (c *Client) Download(e *Entry, dir string, progress func(done, total int64)
 	if err != nil {
 		return "", err
 	}
-	title, artist := p.entry.Title, p.entry.Artist()
-	path := filepath.Join(dir, safeName(title)+".mp3")
+	// The file keeps the video's name; the tags get a clean artist and title.
+	path := filepath.Join(dir, safeName(p.entry.Title)+".mp3")
+	artist, title := match.ArtistTitle(p.entry.Title, p.entry.Artist())
 	if exists(path) {
 		return path, nil
 	}
