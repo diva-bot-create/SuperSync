@@ -16,28 +16,46 @@ import (
 	"time"
 )
 
-// ErrNotDownloadable means the artist hasn't enabled SoundCloud's download
-// button for the track (or its download limit is used up).
-var ErrNotDownloadable = errors.New("the artist hasn't enabled downloads for this track")
+// ErrNotDownloadable means there's nothing to fetch: no download button and
+// no full-length mp3 stream (only AAC/Opus, or a 30 s preview).
+var ErrNotDownloadable = errors.New("SoundCloud offers no downloadable mp3 for this track")
 
-// CanDownload reports whether SuperSync may download the track: only when
-// the artist has turned on SoundCloud's own download button.
-func (t *Track) CanDownload() bool { return t.Downloadable && t.DownloadsLeft }
+// CanDownload reports whether Download has something to fetch: the artist's
+// own download button, or failing that a full-length mp3 stream.
+func (t *Track) CanDownload() bool {
+	if t.Unavailable {
+		return false
+	}
+	return t.Downloadable && t.DownloadsLeft || t.hasMP3Stream()
+}
+
+// hasMP3Stream reports whether a full-length (not 30 s preview) mp3 stream exists.
+func (t *Track) hasMP3Stream() bool {
+	for _, tc := range t.transcodings {
+		if !tc.Snipped && strings.Contains(tc.Format.MimeType, "mpeg") && (tc.Format.Protocol == "progressive" || tc.Format.Protocol == "hls") {
+			return true
+		}
+	}
+	return false
+}
 
 // Progress reports bytes received (total is <= 0 if unknown).
 type Progress func(done, total int64)
 
-// Download saves a track the artist allows downloading into dir and returns
-// the file path. With the user's own SoundCloud login token it fetches the
-// artist's original upload (often WAV); without one, the MP3 stream.
+// Download saves a track into dir and returns the file path. When the artist
+// allows downloads and the user has set their SoundCloud login token, it
+// fetches the artist's original upload (often WAV); otherwise the MP3 stream.
 func (c *Client) Download(t *Track, dir, token string, progress Progress) (path string, original bool, err error) {
 	if !t.CanDownload() {
 		return "", false, ErrNotDownloadable
 	}
+	if p := Existing(t, dir); p != "" {
+		return p, false, nil // already downloaded: re-running a playlist only fetches what's new
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", false, err
 	}
-	if token != "" {
+	if token != "" && t.Downloadable && t.DownloadsLeft {
 		p, err := c.downloadOriginal(t, dir, token, progress)
 		if err == nil {
 			return p, true, nil
@@ -48,7 +66,50 @@ func (c *Client) Download(t *Track, dir, token string, progress Progress) (path 
 		// Token expired or wrong: fall back to the stream.
 	}
 	p, err := c.downloadStream(t, dir, progress)
+	if err == nil {
+		err = tagMP3(p, t.Title, trackArtist(t))
+	}
 	return p, false, err
+}
+
+// Existing is the file an earlier Download saved for t in dir, or "".
+func Existing(t *Track, dir string) string {
+	matches, _ := filepath.Glob(filepath.Join(globEscape(dir), globEscape(baseName(t))+".*"))
+	for _, m := range matches {
+		if !strings.HasSuffix(m, ".part") && !strings.HasPrefix(filepath.Base(m), ".") {
+			return m
+		}
+	}
+	return ""
+}
+
+func globEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`).Replace(s)
+}
+
+func trackArtist(t *Track) string {
+	if t.Artist != "" {
+		return t.Artist
+	}
+	return t.Uploader
+}
+
+// tagMP3 puts a title/artist ID3 tag on a stream mp3 (SoundCloud's have
+// none), so it matches like any other file. Files already tagged are left alone.
+func tagMP3(path, title, artist string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if len(b) >= 3 && string(b[:3]) == "ID3" {
+		return nil
+	}
+	tmp := path + ".part"
+	if err := os.WriteFile(tmp, append(ID3v2(title, artist), b...), 0o644); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 var errUnauthorized = errors.New("SoundCloud didn't accept the login token")

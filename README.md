@@ -13,11 +13,19 @@ turns SoundCloud playlists into rekordbox playlists in one go.
 - **Import a SoundCloud playlist**: SuperSync creates the playlist inside a *SoundCloud* folder in
   your rekordbox library:
   - Tracks you already have are linked.
-  - Tracks whose artist turned on SoundCloud's download button are downloaded and added.
-  - Everything else is listed with its free-download or buy link.
+  - Tracks you don't have are downloaded and added: the artist's original file when they turned
+    on SoundCloud's download button and you've set your SoundCloud login token, otherwise the
+    MP3 stream (usually 128 kbps, so it shows as a rip worth upgrading).
+  - Tracks with no MP3 stream (a few only stream as AAC/Opus, or as a 30 s preview) are listed
+    with their free-download or buy link.
   In playlists imported from SoundCloud, any track below UHQ gets a button that goes where
   SoundCloud's own button goes: the track's download (SoundCloud requires a login there) or the
   buy / free-download link.
+- **Download a playlist**: `supersync download <url>` saves a whole SoundCloud or YouTube
+  playlist as tagged MP3s into *SoundCloud/<playlist>* or *YouTube/<playlist>* in your download
+  folder (`--out DIR` to put them elsewhere, `--missing` for only the tracks you don't have).
+  Re-running it only fetches what's new. YouTube audio is converted from its ~128 kbps AAC inside
+  SuperSync; nothing else needs installing.
 - **Duplicates**: finds the same track saved more than once and suggests keeping the best copy.
   It can carry your rekordbox cues over to the copy you keep.
 - **Upgrades**: tracks worth buying properly, including fake 320s and WAVs made from MP3s.

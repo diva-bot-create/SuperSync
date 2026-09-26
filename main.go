@@ -5,20 +5,24 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"supersync/internal/analyze"
 	"supersync/internal/app"
 	"supersync/internal/audio"
 	"supersync/internal/rbdb"
+	"supersync/internal/soundcloud"
 	"supersync/internal/spectrum"
 	"supersync/internal/web"
+	"supersync/internal/youtube"
 )
 
 var version = "dev"
@@ -34,6 +38,9 @@ Commands:
   supersync library                 show the library and its playlists
   supersync import <url>            make a library playlist from a SoundCloud playlist,
                                     downloading tracks the artists allow
+  supersync download <url>          download a whole SoundCloud or YouTube playlist as mp3s
+      --out DIR                     where to put them (default: <music>/SoundCloud|YouTube/<playlist>)
+      --missing                     only the tracks you don't already have
   supersync apply                   finish imports that waited for rekordbox to close
   supersync scan                    read the library's audio files (quality, upscales)
   supersync check <url|list.txt>    what do I have / need from a playlist
@@ -73,6 +80,8 @@ func runCmd(cmd string, args []string) {
 	scToken := fs.String("sc-token", "", "")
 	minKbps := fs.Int("min-kbps", 0, "")
 	xmlOut := fs.String("xml", "", "")
+	outDir := fs.String("out", "", "")
+	missing := fs.Bool("missing", false, "")
 	m3uOut := fs.String("m3u", "", "")
 	needOut := fs.String("need", "", "")
 	move := fs.Bool("move", false, "")
@@ -184,6 +193,18 @@ func runCmd(cmd string, args []string) {
 			}
 			time.Sleep(300 * time.Millisecond)
 		}
+	case "download":
+		if fs.NArg() != 1 {
+			die("usage: supersync download <soundcloud or youtube playlist url> [--out DIR] [--missing]")
+		}
+		if *outDir == "" && a.Cfg.MusicDir == "" {
+			die("Tell me where downloads go first, e.g.\n  supersync download <url> --music ~/Music/DJ   (remembered)\nor pass --out DIR for just this download.")
+		}
+		if youtube.IsLink(fs.Arg(0)) {
+			downloadYouTube(a, fs.Arg(0), *outDir, *missing)
+			return
+		}
+		download(a, fs.Arg(0), *outDir, *missing)
 	case "apply":
 		n, err := a.ApplyPending()
 		must(err)
@@ -321,6 +342,149 @@ func runCmd(cmd string, args []string) {
 	}
 }
 
+// download fetches every track of a playlist (or, with missing, just the ones
+// the library doesn't have), three at a time. Files already in the folder are
+// kept, so re-running picks up only what's new.
+func download(a *app.App, link, dir string, missing bool) {
+	var tracks []*soundcloud.Track
+	var title string
+	if missing {
+		ensureScanned(a)
+		res, err := a.Check(link, progressBar)
+		must(err)
+		title = res.Playlist.Title
+		for _, r := range res.Rows {
+			if r.Status == app.Need {
+				tracks = append(tracks, r.SC)
+			}
+		}
+	} else {
+		pl, err := a.SC.FetchPlaylist(link)
+		must(err)
+		title, tracks = pl.Title, pl.Tracks
+	}
+	if dir == "" {
+		dir = filepath.Join(a.Cfg.MusicDir, "SoundCloud", soundcloud.SafeFilename(title))
+	}
+	fmt.Printf("%s: downloading %d tracks to %s\n\n", title, len(tracks), dir)
+
+	var mu sync.Mutex
+	var got, kept, failed int
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i, t := range tracks {
+		wg.Add(1)
+		go func(n int, t *soundcloud.Track) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			var line string
+			var err error
+			var path string
+			var original bool
+			if !t.CanDownload() {
+				err = soundcloud.ErrNotDownloadable
+				if t.Unavailable {
+					err = errors.New("unavailable on SoundCloud")
+				}
+			} else if path = soundcloud.Existing(t, dir); path == "" {
+				path, original, err = a.SC.Download(t, dir, a.Cfg.SCToken, nil)
+			} else {
+				mu.Lock()
+				kept++
+				fmt.Printf("%3d = %s  (already downloaded)\n", n, filepath.Base(path))
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err != nil:
+				failed++
+				line = fmt.Sprintf("%3d ✗ %s — %v", n, t.Title, err)
+			case original:
+				got++
+				line = fmt.Sprintf("%3d ✓ %s  (original file)", n, filepath.Base(path))
+			default:
+				got++
+				line = fmt.Sprintf("%3d ✓ %s", n, filepath.Base(path))
+			}
+			fmt.Println(line)
+		}(i+1, t)
+	}
+	wg.Wait()
+	fmt.Printf("\n%d downloaded · %d already had · %d failed\n", got, kept, failed)
+	if got > 0 {
+		fmt.Println("Stream copies are usually 128 kbps; run `supersync scan` to add them to the library.")
+	}
+}
+
+// downloadYouTube is download for YouTube links, converted to mp3 in Go.
+// With missing, the videos are matched against the
+// library like a SoundCloud playlist first.
+func downloadYouTube(a *app.App, link, dir string, missing bool) {
+	yt := youtube.New()
+	pl, err := yt.List(link)
+	must(err)
+	entries := pl.Entries
+	if missing {
+		ensureScanned(a)
+		// Reuse the SoundCloud matcher: it only needs a title, uploader and length.
+		sc := &soundcloud.Playlist{Title: pl.Title}
+		for i, e := range entries {
+			sc.Tracks = append(sc.Tracks, &soundcloud.Track{ID: int64(i), Title: e.Title, Uploader: e.Artist(), DurationMS: int64(e.Duration * 1000)})
+		}
+		res := a.Compare(sc, a.Lib)
+		var need []*youtube.Entry
+		for i, r := range res.Rows {
+			if r.Status == app.Need {
+				need = append(need, entries[i])
+			}
+		}
+		fmt.Printf("already have %d of %d\n", len(entries)-len(need), len(entries))
+		entries = need
+	}
+	if dir == "" {
+		dir = filepath.Join(a.Cfg.MusicDir, "YouTube", soundcloud.SafeFilename(pl.Title))
+	}
+	fmt.Printf("%s: downloading %d videos to %s\n\n", pl.Title, len(entries), dir)
+
+	var mu sync.Mutex
+	var got, kept, failed int
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i, e := range entries {
+		wg.Add(1)
+		go func(n int, e *youtube.Entry) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if p := youtube.Existing(e, dir); p != "" {
+				mu.Lock()
+				kept++
+				fmt.Printf("%3d = %s  (already downloaded)\n", n, filepath.Base(p))
+				mu.Unlock()
+				return
+			}
+			path, err := yt.Download(e, dir, nil)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failed++
+				fmt.Printf("%3d ✗ %s — %v\n", n, e.Title, err)
+				return
+			}
+			got++
+			fmt.Printf("%3d ✓ %s\n", n, filepath.Base(path))
+		}(i+1, e)
+	}
+	wg.Wait()
+	fmt.Printf("\n%d downloaded · %d already had · %d failed\n", got, kept, failed)
+	if got > 0 {
+		fmt.Println("These are converted from YouTube's ~128 kbps AAC; run `supersync scan` to add them to the library.")
+	}
+}
+
 // reorder lets flags come after positional args ("check URL --xml out.xml").
 func reorder(args []string) []string {
 	var flags, pos []string
@@ -329,7 +493,7 @@ func reorder(args []string) []string {
 		if strings.HasPrefix(a, "-") && len(a) > 1 {
 			flags = append(flags, a)
 			name := strings.TrimLeft(a, "-")
-			if !strings.Contains(name, "=") && name != "move" && name != "no-browser" && i+1 < len(args) {
+			if !strings.Contains(name, "=") && name != "move" && name != "no-browser" && name != "missing" && i+1 < len(args) {
 				flags = append(flags, args[i+1])
 				i++
 			}
