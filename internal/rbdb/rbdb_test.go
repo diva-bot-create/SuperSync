@@ -287,3 +287,75 @@ func TestParseStream(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaylistEdits(t *testing.T) {
+	loc := library(t)
+	db, err := Open(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracks, _ := db.Tracks()
+	db.Close()
+	if len(tracks) < 2 {
+		t.Skip("test library has too few tracks")
+	}
+	tx, err := Begin(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder, _ := tx.CreatePlaylist("Gigs", "root", true)
+	pl, _ := tx.CreatePlaylist("Friday", folder, false)
+	keep, _ := tx.CreatePlaylist("Keep me", "root", false)
+	if err := tx.AddToPlaylist(pl, tracks[0].ID, tracks[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.RenamePlaylist(keep, "Kept"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Commit(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	xmlBefore, _ := os.ReadFile(loc.PlaylistXML)
+	if !strings.Contains(string(xmlBefore), hexID(pl)) {
+		t.Fatal("new playlist missing from masterPlaylists6.xml")
+	}
+
+	tx, _ = Begin(loc)
+	if err := tx.RemoveFromPlaylist(pl, tracks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := tx.DeletePlaylist(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gone) != 2 {
+		t.Fatalf("deleted %v, want the folder and its playlist", gone)
+	}
+	if _, err := tx.Commit(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	db, _ = Open(loc)
+	defer db.Close()
+	pls, _ := db.Playlists()
+	var names []string
+	var walk func([]*Playlist)
+	walk = func(ps []*Playlist) {
+		for _, p := range ps {
+			names = append(names, p.Name)
+			walk(p.Children)
+		}
+	}
+	walk(pls)
+	got := strings.Join(names, ",")
+	if strings.Contains(got, "Gigs") || strings.Contains(got, "Friday") || !strings.Contains(got, "Kept") {
+		t.Fatalf("playlists after delete: %s", got)
+	}
+	after, _ := db.Tracks()
+	if len(after) != len(tracks) {
+		t.Fatalf("collection changed: %d tracks, want %d", len(after), len(tracks))
+	}
+	xmlAfter, _ := os.ReadFile(loc.PlaylistXML)
+	if strings.Contains(string(xmlAfter), hexID(pl)) || strings.Contains(string(xmlAfter), hexID(folder)) || !strings.Contains(string(xmlAfter), hexID(keep)) {
+		t.Fatal("masterPlaylists6.xml not updated")
+	}
+}

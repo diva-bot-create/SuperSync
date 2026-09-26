@@ -10,6 +10,7 @@ void ssRun(const char *url, const char *title, int w, int h, int hidden);
 void ssSetKeepRunning(int keep);
 void ssFocus(void);
 void ssClose(void);
+void ssEdit(const char *sel);
 */
 import "C"
 
@@ -69,6 +70,19 @@ func Run(o Options) bool {
 
 // Focus brings the window to the front (another launch of SuperSync).
 func Focus() { C.ssFocus() }
+
+// Edit runs an edit command (paste, cut, copy, selectAll, undo, redo) in the
+// focused text field, as the Edit menu does. Pages can't read the clipboard
+// themselves, so Paste in SuperSync's right-click menu goes through here.
+func Edit(action string) {
+	sel := map[string]string{"paste": "paste:", "cut": "cut:", "copy": "copy:", "selectAll": "selectAll:", "undo": "undo:", "redo": "redo:"}[action]
+	if sel == "" {
+		return
+	}
+	c := C.CString(sel)
+	defer C.free(unsafe.Pointer(c))
+	C.ssEdit(c)
+}
 
 // Close quits the app, as ⌘Q does.
 func Close() { C.ssClose() }

@@ -71,9 +71,10 @@ the clock), so automatic syncs carry on. Open it again from there or from its ic
 there too, or with ⌘Q on Mac. In **Settings → App** you can switch this off, or have SuperSync
 open by itself (in the background) when you log in.
 
-**Right-click anything.** Tracks, playlists, duplicates, cue points and the player all have their
-own menu: play next, show the file in Finder or Explorer, open the track on SoundCloud, copy its
-name or link, and more.
+**Right-click anything.** Tracks, playlists, folders, duplicates, cue points, text boxes and the
+player all have their own menu. From there you can create, rename or delete playlists (with Undo),
+add tracks to a playlist or remove them, play a track next, show the file in Finder or Explorer,
+open it on SoundCloud, or copy its name or link.
 
 ## What you can do
 
@@ -106,6 +107,19 @@ Every track is labelled **LOW** (under 128 kbps), **NORMAL** (128), **HQ** (256)
 (above 256, or lossless like WAV, AIFF and FLAC). Click the labels at the top of a playlist to show
 only those tracks. In synced playlists, anything below UHQ has a button that takes you to where you
 can get a better copy.
+
+**Upgrading a track.** LOW and NORMAL labels can be clicked. Click one to download or buy a
+better copy, using the links the uploader put on SoundCloud. Once you've downloaded it (to your
+music folder or Downloads), SuperSync notices within a few minutes and the label gets a **↑**.
+Click it and choose **Swap in**. The better copy then takes the old one's place in every playlist
+and its history, your cues move across lined up to the new file, and the old file goes to
+`_SuperSync Duplicates`. **Undo** puts everything back. If SuperSync hasn't spotted the file, choose
+**I have a better copy…** and pick it.
+
+**Songs you already have.** When a playlist syncs, songs already in your library are added as they
+are: nothing is downloaded, and your cues, beatgrid and play history stay. If SuperSync isn't sure
+a file is the same recording (maybe it's another version), the track shows **MAYBE**. Choose
+**Same track** to use your copy, or **Different** to download this one.
 
 SuperSync also listens for fakes. A "320 kbps" MP3 or a WAV that was made from a low-quality
 download is labelled as what it really is, and shows up under **Upgrades**.
@@ -158,7 +172,10 @@ buttons next to each track take you to where you can buy or download a better co
 **Why does a track say NO ACCESS?** The file is there, but your computer isn't letting
 SuperSync read that folder. This is often your Downloads or Documents folder, or an external drive.
 On Mac, allow SuperSync in **System Settings → Privacy & Security → Files & Folders**, then click
-**Rescan**. **MISSING** means the file really isn't where rekordbox expects it any more.
+**Rescan**. **MISSING** means the file isn't where rekordbox expects it. Hover over it to see why: a drive
+that isn't connected, a file that was moved, or a library shared from another computer. Click
+**find them** at the top of the playlist and SuperSync searches your music folder for the moved
+files, or right-click a track and choose **Locate…** to pick the file yourself.
 
 **Where are my settings kept?** On your computer only:
 `~/Library/Application Support/SuperSync/` on Mac, `%AppData%\SuperSync\` on Windows.

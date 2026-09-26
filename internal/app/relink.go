@@ -135,3 +135,60 @@ func (a *App) downloadLink(link string, dir string, want *soundcloud.Track) (str
 	}
 	return path, nil
 }
+
+// ResolveMaybe settles a track SuperSync wasn't sure about. Same: the similar
+// file is this track, and it joins the playlist. Different: it isn't, and the
+// next sync downloads the track. The answer is remembered for later syncs.
+func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) error {
+	sp := a.scByURLLocked(playlistURL)
+	if sp == nil {
+		return errors.New("that playlist isn't synced any more")
+	}
+	a.State.mu.Lock()
+	var entry *SCEntry
+	for _, e := range sp.Entries {
+		if e.SC != nil && e.SC.ID == scID {
+			entry = e
+		}
+	}
+	a.State.mu.Unlock()
+	if entry == nil {
+		return errors.New("that track isn't in the playlist any more")
+	}
+	if !same {
+		if err := a.Decide(scID, ""); err != nil {
+			return err
+		}
+		a.State.mu.Lock()
+		entry.Status, entry.Maybe, entry.Note = "missing", "", ""
+		a.State.save()
+		a.State.mu.Unlock()
+		return nil
+	}
+	path := entry.Maybe
+	if path == "" {
+		return errors.New("there's no similar file to use")
+	}
+	if err := a.Decide(scID, path); err != nil {
+		return err
+	}
+	a.State.mu.Lock()
+	entry.Status, entry.Note = "have", ""
+	if tr := a.TrackByPath(path); tr != nil {
+		entry.TrackID = tr.ID
+	} else {
+		entry.File = path
+	}
+	entries := append([]*SCEntry(nil), sp.Entries...)
+	a.State.save()
+	a.State.mu.Unlock()
+	folder := "SoundCloud"
+	if sp.Source == "youtube" {
+		folder = "YouTube"
+	}
+	err := a.applyChange(scChange(folder, sp.Title, sp.URL, entries, false))
+	if errors.Is(err, rbdb.ErrRunning) {
+		return nil // added when rekordbox closes (it's waiting in the sidebar)
+	}
+	return err
+}

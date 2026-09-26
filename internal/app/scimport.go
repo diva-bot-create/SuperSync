@@ -304,6 +304,9 @@ func (a *App) runImport(j *Job, link string) {
 		switch {
 		case row.SC.Unavailable:
 			e.Status, e.Note = "missing", "Unavailable on SoundCloud"
+		case row.Status == Have && !exists(row.Match.Path):
+			// The scan remembered a file that has since been moved or deleted.
+			e.Status = "missing"
 		case row.Status == Have:
 			if tr := a.TrackByPath(row.Match.Path); tr != nil {
 				e.Status, e.TrackID = "have", tr.ID
@@ -512,6 +515,10 @@ func (a *App) scByURLLocked(u string) *SCPlaylist {
 
 func noDownloadNote(t *soundcloud.Track) string {
 	switch {
+	case t.GoPlus && !t.Downloadable:
+		return "SoundCloud Go+ only: without a subscription SoundCloud plays just a 30-second preview"
+	case t.Protected && !t.Downloadable:
+		return "SoundCloud only streams this copy-protected"
 	case t.Downloadable && !t.DownloadsLeft:
 		return "SoundCloud download limit reached"
 	case len(t.Links) > 0 && (t.Links[0].Kind == soundcloud.FreeDownload || t.Links[0].Free):
@@ -671,3 +678,5 @@ func (a *App) Tier(t *rbdb.Track) (tier string, kbps int, note string) {
 	}
 	return "", 0, note
 }
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }

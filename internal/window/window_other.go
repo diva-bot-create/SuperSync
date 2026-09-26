@@ -9,3 +9,4 @@ func Supported() bool     { return false }
 func Focus()              {}
 func Close()              {}
 func SetKeepRunning(bool) {}
+func Edit(string)         {}

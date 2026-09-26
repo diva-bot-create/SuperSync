@@ -48,6 +48,7 @@ type Tx struct {
 	device    struct{ ID, MasterDBID string }
 	trackLink int64
 	playlists []xmlNode // additions for masterPlaylists6.xml
+	removed   []string  // playlists deleted (their masterPlaylists6.xml nodes go too)
 	done      bool
 	start     fingerprint // the library as it was when the transaction began
 	// ReuseBackup lets a small follow-up write (a playlist filling in during
@@ -370,6 +371,124 @@ func (t *Tx) AddToPlaylist(playlistID string, contentIDs ...string) error {
 	return nil
 }
 
+// Relocate points a track at its file's new location (as rekordbox's own
+// Relocate does); cues, playlists and history are kept.
+func (t *Tx) Relocate(contentID, path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	r, err := t.tx.Exec(`UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, updated_at = ?, rb_local_usn = ? WHERE ID = ?`,
+		filepath.ToSlash(path), filepath.Base(path), st.Size(), t.now, t.nextUSN(), contentID)
+	if err != nil {
+		return err
+	}
+	if n, _ := r.RowsAffected(); n == 0 {
+		return errors.New("that track isn't in the library any more")
+	}
+	return nil
+}
+
+// RenamePlaylist renames a playlist or folder.
+func (t *Tx) RenamePlaylist(id, name string) error {
+	r, err := t.tx.Exec(`UPDATE djmdPlaylist SET Name = ?, updated_at = ?, rb_local_usn = ? WHERE ID = ?`, name, t.now, t.nextUSN(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := r.RowsAffected(); n == 0 {
+		return errors.New("that playlist isn't in the library any more")
+	}
+	return nil
+}
+
+// DeletePlaylist deletes a playlist, or a folder with everything in it. The
+// tracks stay in the collection. It returns the IDs deleted.
+func (t *Tx) DeletePlaylist(id string) ([]string, error) {
+	var parent string
+	if err := t.tx.QueryRow(`SELECT IFNULL(ParentID,'root') FROM djmdPlaylist WHERE ID = ?`, id).Scan(&parent); err != nil {
+		return nil, errors.New("that playlist isn't in the library any more")
+	}
+	var ids []string
+	var collect func(id string) error
+	collect = func(id string) error {
+		ids = append(ids, id)
+		rows, err := t.tx.Query(`SELECT ID FROM djmdPlaylist WHERE ParentID = ?`, id)
+		if err != nil {
+			return err
+		}
+		var kids []string
+		for rows.Next() {
+			var k string
+			rows.Scan(&k)
+			kids = append(kids, k)
+		}
+		rows.Close()
+		for _, k := range kids {
+			if err := collect(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := collect(id); err != nil {
+		return nil, err
+	}
+	for _, d := range ids {
+		if _, err := t.tx.Exec(`DELETE FROM djmdSongPlaylist WHERE PlaylistID = ?`, d); err != nil {
+			return nil, err
+		}
+		if _, err := t.tx.Exec(`DELETE FROM djmdPlaylist WHERE ID = ?`, d); err != nil {
+			return nil, err
+		}
+	}
+	// Close the gap in the parent's order.
+	rows, err := t.tx.Query(`SELECT ID FROM djmdPlaylist WHERE IFNULL(ParentID,'root') = ? ORDER BY Seq`, parent)
+	if err != nil {
+		return nil, err
+	}
+	var sibs []string
+	for rows.Next() {
+		var sid string
+		rows.Scan(&sid)
+		sibs = append(sibs, sid)
+	}
+	rows.Close()
+	for i, sid := range sibs {
+		if _, err := t.tx.Exec(`UPDATE djmdPlaylist SET Seq = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ? AND Seq <> ?`, i+1, t.nextUSN(), t.now, sid, i+1); err != nil {
+			return nil, err
+		}
+	}
+	t.removed = append(t.removed, ids...)
+	return ids, nil
+}
+
+// RemoveFromPlaylist takes tracks out of a playlist (not the collection).
+func (t *Tx) RemoveFromPlaylist(playlistID string, contentIDs ...string) error {
+	for _, c := range contentIDs {
+		if _, err := t.tx.Exec(`DELETE FROM djmdSongPlaylist WHERE PlaylistID = ? AND ContentID = ?`, playlistID, c); err != nil {
+			return err
+		}
+	}
+	rows, err := t.tx.Query(`SELECT ID FROM djmdSongPlaylist WHERE PlaylistID = ? ORDER BY TrackNo`, playlistID)
+	if err != nil {
+		return err
+	}
+	var es []string
+	for rows.Next() {
+		var e string
+		rows.Scan(&e)
+		es = append(es, e)
+	}
+	rows.Close()
+	for i, e := range es {
+		if _, err := t.tx.Exec(`UPDATE djmdSongPlaylist SET TrackNo = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ? AND TrackNo <> ?`, i+1, t.nextUSN(), t.now, e, i+1); err != nil {
+			return err
+		}
+	}
+	_, err = t.tx.Exec(`UPDATE djmdPlaylist SET updated_at = ?, rb_local_usn = ? WHERE ID = ?`, t.now, t.nextUSN(), playlistID)
+	return err
+}
+
 // OrderPlaylist puts a playlist's entries in the given order (content IDs);
 // entries not listed keep their relative order after them.
 func (t *Tx) OrderPlaylist(playlistID string, contentIDs []string) error {
@@ -559,7 +678,7 @@ func copyFile(src, dst string) error {
 // updatePlaylistXML registers new playlists in masterPlaylists6.xml, which
 // rekordbox keeps alongside the database.
 func (t *Tx) updatePlaylistXML() error {
-	if len(t.playlists) == 0 {
+	if len(t.playlists) == 0 && len(t.removed) == 0 {
 		return nil
 	}
 	b, err := os.ReadFile(t.loc.PlaylistXML)
@@ -569,6 +688,20 @@ func (t *Tx) updatePlaylistXML() error {
 		return err
 	}
 	s := string(b)
+	for _, id := range t.removed {
+		// Drop the node's line: <NODE Id="…" …/>
+		marker := fmt.Sprintf("<NODE Id=%q ", hexID(id))
+		if i := strings.Index(s, marker); i >= 0 {
+			start := strings.LastIndex(s[:i], "\n") + 1
+			end := strings.Index(s[i:], "\n")
+			if end < 0 {
+				end = len(s) - i
+			} else {
+				end++
+			}
+			s = s[:start] + s[i+end:]
+		}
+	}
 	end := strings.LastIndex(s, "</PLAYLISTS>")
 	if end < 0 {
 		return errors.New("unexpected format")

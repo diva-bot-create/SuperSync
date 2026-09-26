@@ -37,6 +37,11 @@ type Source interface {
 	Merge(ops []MergeOp) (backup string, err error)
 	// Restore puts a backup from Merge/Apply back.
 	Restore(backup string) error
+	// EditPlaylists creates, renames or deletes playlists, or adds or removes
+	// tracks; for rekordbox it fails with rbdb.ErrRunning while rekordbox is open.
+	EditPlaylists(e PlaylistEdit) (*PlaylistEditResult, error)
+	// Relocate points tracks (ID -> new path) at files that have moved.
+	Relocate(moves map[string]string) error
 	// Refresh reloads if the library changed on disk; reports whether it did.
 	Refresh() bool
 	Close()
@@ -66,6 +71,22 @@ type Change struct {
 	Ordered bool `json:"ordered,omitempty"`
 	// Interim marks a partial update while an import is still downloading.
 	Interim bool `json:"interim,omitempty"`
+}
+
+// PlaylistEdit is one change to the playlists.
+type PlaylistEdit struct {
+	Op       string   `json:"op"` // create, rename, delete, add, remove
+	ID       string   `json:"id,omitempty"`
+	Parent   string   `json:"parent,omitempty"` // create: the folder ("" or "root" for the top)
+	Name     string   `json:"name,omitempty"`
+	Folder   bool     `json:"folder,omitempty"`
+	TrackIDs []string `json:"trackIds,omitempty"`
+}
+
+type PlaylistEditResult struct {
+	ID      string   `json:"id,omitempty"` // create: the new playlist
+	Deleted []string `json:"deleted,omitempty"`
+	Backup  string   `json:"backup,omitempty"`
 }
 
 type ChangeItem struct {
@@ -292,6 +313,53 @@ func (s *rbSource) Merge(ops []MergeOp) (string, error) {
 		return "", err
 	}
 	return backup, s.load()
+}
+
+func (s *rbSource) EditPlaylists(e PlaylistEdit) (*PlaylistEditResult, error) {
+	tx, err := rbdb.Begin(s.loc)
+	if err != nil {
+		return nil, err
+	}
+	res := &PlaylistEditResult{}
+	switch e.Op {
+	case "create":
+		res.ID, err = tx.CreatePlaylist(e.Name, e.Parent, e.Folder)
+	case "rename":
+		err = tx.RenamePlaylist(e.ID, e.Name)
+	case "delete":
+		res.Deleted, err = tx.DeletePlaylist(e.ID)
+	case "add":
+		err = tx.AddToPlaylist(e.ID, e.TrackIDs...)
+	case "remove":
+		err = tx.RemoveFromPlaylist(e.ID, e.TrackIDs...)
+	default:
+		err = fmt.Errorf("unknown playlist change %q", e.Op)
+	}
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	if res.Backup, err = tx.Commit(s.backupRoot); err != nil {
+		return nil, err
+	}
+	return res, s.load()
+}
+
+func (s *rbSource) Relocate(moves map[string]string) error {
+	tx, err := rbdb.Begin(s.loc)
+	if err != nil {
+		return err
+	}
+	for id, p := range moves {
+		if err := tx.Relocate(id, p); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	if _, err := tx.Commit(s.backupRoot); err != nil {
+		return err
+	}
+	return s.load()
 }
 
 func (s *rbSource) Restore(backup string) error {
@@ -554,6 +622,97 @@ func (s *xmlSource) Apply(c *Change) (*Applied, error) {
 		return nil, err
 	}
 	return res, s.load(path)
+}
+
+func (s *xmlSource) EditPlaylists(e PlaylistEdit) (*PlaylistEditResult, error) {
+	s.mu.Lock()
+	lib := s.lib
+	res := &PlaylistEditResult{}
+	backup := filepath.Join(DataDir(), "library backups", time.Now().Format("2006-01-02 15.04.05.000"))
+	os.MkdirAll(backup, 0o755)
+	if b, err := os.ReadFile(lib.Path); err == nil {
+		os.WriteFile(filepath.Join(backup, filepath.Base(lib.Path)), b, 0o644)
+		res.Backup = backup
+	}
+	var err error
+	node := lib.Node(e.ID)
+	switch e.Op {
+	case "create":
+		parent := lib.Root
+		if e.Parent != "" && e.Parent != "root" {
+			if parent = lib.Node(e.Parent); parent == nil || !parent.Folder {
+				err = errors.New("that folder isn't in the library any more")
+			}
+		}
+		if err == nil {
+			res.ID = lib.Child(parent, e.Name, e.Folder).ID
+		}
+	case "rename", "add", "remove":
+		if node == nil {
+			err = errors.New("that playlist isn't in the library any more")
+			break
+		}
+		switch e.Op {
+		case "rename":
+			node.Name = e.Name
+		case "add":
+			have := map[string]bool{}
+			for _, k := range node.Keys {
+				have[k] = true
+			}
+			for _, k := range e.TrackIDs {
+				if !have[k] {
+					node.Keys = append(node.Keys, k)
+					have[k] = true
+				}
+			}
+		case "remove":
+			drop := map[string]bool{}
+			for _, k := range e.TrackIDs {
+				drop[k] = true
+			}
+			keys := node.Keys[:0]
+			for _, k := range node.Keys {
+				if !drop[k] {
+					keys = append(keys, k)
+				}
+			}
+			node.Keys = keys
+		}
+	case "delete":
+		if !lib.Delete(e.ID) {
+			err = errors.New("that playlist isn't in the library any more")
+		}
+		res.Deleted = []string{e.ID}
+	default:
+		err = fmt.Errorf("unknown playlist change %q", e.Op)
+	}
+	if err == nil {
+		err = lib.Save()
+	}
+	path := lib.Path
+	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return res, s.load(path)
+}
+
+func (s *xmlSource) Relocate(moves map[string]string) error {
+	s.mu.Lock()
+	lib := s.lib
+	for id, p := range moves {
+		if t := lib.Track(id); t != nil {
+			t.Attrs = rekordbox.SetAttr(t.Attrs, "Location", rekordbox.LocationFromPath(p))
+		}
+	}
+	err := lib.Save()
+	path := lib.Path
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return s.load(path)
 }
 
 func (s *xmlSource) Merge(ops []MergeOp) (string, error) {

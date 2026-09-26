@@ -42,6 +42,7 @@ var (
 	registerWindowMsg   = user32.NewProc("RegisterWindowMessageW")
 	shellNotifyIcon     = shell32.NewProc("Shell_NotifyIconW")
 	getModuleHandle     = kernel32.NewProc("GetModuleHandleW")
+	keybdEvent          = user32.NewProc("keybd_event")
 )
 
 const (
@@ -234,6 +235,23 @@ func with(f func(w webview2.WebView)) {
 
 // Focus brings the window back (another launch of SuperSync, or the tray).
 func Focus() { with(func(w webview2.WebView) { show(uintptr(w.Window())) }) }
+
+// Edit runs an edit command (paste, cut, copy, selectAll, undo, redo) in the
+// focused text field by pressing its shortcut. Pages can't read the
+// clipboard themselves, so Paste in the right-click menu goes through here.
+func Edit(action string) {
+	key := map[string]uintptr{"paste": 'V', "cut": 'X', "copy": 'C', "selectAll": 'A', "undo": 'Z', "redo": 'Y'}[action]
+	if key == 0 {
+		return
+	}
+	with(func(webview2.WebView) {
+		const vkControl, keyUp = 0x11, 0x2
+		keybdEvent.Call(vkControl, 0, 0, 0)
+		keybdEvent.Call(key, 0, 0, 0)
+		keybdEvent.Call(key, 0, keyUp, 0)
+		keybdEvent.Call(vkControl, 0, keyUp, 0)
+	})
+}
 
 // Close quits SuperSync.
 func Close() { with(func(webview2.WebView) { quit() }) }

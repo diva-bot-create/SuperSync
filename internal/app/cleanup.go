@@ -40,6 +40,9 @@ type LastCleanup struct {
 	DBMod   time.Time      `json:"dbMod"` // library's modification time right after; undo refuses if it changed since
 	Moves   []analyze.Move `json:"moves"`
 	Summary string         `json:"summary"`
+	// Remap is how synced playlists' entries were re-pointed (extra ID ->
+	// kept ID), so undo can point them back.
+	Remap map[string]string `json:"remap,omitempty"`
 }
 
 // CleanupDuplicates folds each group's extras into its keeper, in the library
@@ -110,9 +113,17 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 		res.Backup = backup
 		a.rebuild()
 	}
+	// Synced playlists follow their tracks to the copies kept.
+	remap := map[string]string{}
+	for _, op := range ops {
+		remap[op.Extra] = op.Keep
+	}
+	a.State.mu.Lock()
+	a.remapEntriesLocked(remap)
+	a.State.mu.Unlock()
 	moves, err := a.Quarantine(files)
 	res.Moved = len(moves)
-	last := &LastCleanup{At: time.Now(), Backup: res.Backup, Moves: moves,
+	last := &LastCleanup{At: time.Now(), Backup: res.Backup, Moves: moves, Remap: remap,
 		Summary: fmt.Sprintf("%d duplicate%s cleaned up", len(files), plural(len(files)))}
 	if info := a.Src.Info(); info.Kind == "rekordbox" {
 		if st, err := os.Stat(info.Path); err == nil {
@@ -124,6 +135,21 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 	a.State.save()
 	a.State.mu.Unlock()
 	return res, err
+}
+
+// remapEntriesLocked re-points synced playlists' entries from one library
+// track to another (old ID -> new ID).
+func (a *App) remapEntriesLocked(m map[string]string) {
+	if len(m) == 0 {
+		return
+	}
+	for _, p := range a.State.SCPlaylists {
+		for _, e := range p.Entries {
+			if to, ok := m[e.TrackID]; ok {
+				e.TrackID, e.File = to, ""
+			}
+		}
+	}
 }
 
 func plural(n int) string {
@@ -157,7 +183,12 @@ func (a *App) UndoCleanup() error {
 	if _, err := analyze.UndoMoves(last.Moves); err != nil {
 		return err
 	}
+	back := map[string]string{}
+	for extra, keep := range last.Remap {
+		back[keep] = extra
+	}
 	a.State.mu.Lock()
+	a.remapEntriesLocked(back)
 	a.State.LastCleanup = nil
 	a.State.save()
 	a.State.mu.Unlock()

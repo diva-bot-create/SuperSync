@@ -33,6 +33,10 @@ type Track struct {
 	PurchaseText string `json:"purchaseText,omitempty"`
 	Downloadable bool   `json:"downloadable"`
 	Unavailable  bool   `json:"unavailable,omitempty"`
+	// GoPlus: SoundCloud Go+ only; everyone else gets a 30-second preview.
+	GoPlus bool `json:"goPlus,omitempty"`
+	// Protected: SoundCloud only streams it copy-protected.
+	Protected bool `json:"protected,omitempty"`
 	// DownloadsLeft is false when the uploader's download limit is used up.
 	DownloadsLeft bool `json:"downloadsLeft"`
 	// Links are free-download and store links from the buy button and description.
@@ -180,6 +184,7 @@ type rawTrack struct {
 	Downloadable     bool   `json:"downloadable"`
 	HasDownloadsLeft bool   `json:"has_downloads_left"`
 	TrackAuth        string `json:"track_authorization"`
+	Policy           string `json:"policy"`
 	Media            struct {
 		Transcodings []transcoding `json:"transcodings"`
 	} `json:"media"`
@@ -212,6 +217,14 @@ func (t *rawTrack) convert() *Track {
 	if t.PublisherMetadata != nil {
 		out.Artist = strings.TrimSpace(t.PublisherMetadata.Artist)
 	}
+	full := false
+	for _, tc := range t.Media.Transcodings {
+		if !tc.Snipped {
+			full = true
+		}
+	}
+	out.GoPlus = t.Policy == "SNIP" || (len(t.Media.Transcodings) > 0 && !full)
+	out.Protected = out.protectedOnly()
 	return out
 }
 

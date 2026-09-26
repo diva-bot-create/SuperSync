@@ -98,6 +98,18 @@ func (s *server) routes(mux *http.ServeMux) {
 		}
 		reply(w, map[string]bool{"window": s.inWindow}, nil)
 	})
+	mux.HandleFunc("POST /api/edit", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Action string `json:"action"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if s.inWindow {
+			window.Edit(req.Action)
+		}
+		reply(w, map[string]bool{"ok": s.inWindow}, nil)
+	})
 	mux.HandleFunc("POST /api/quit", func(w http.ResponseWriter, r *http.Request) {
 		s.quit()
 		reply(w, map[string]bool{"ok": true}, nil)
@@ -257,6 +269,86 @@ func (s *server) routes(mux *http.ServeMux) {
 		reply(w, out, nil)
 	})
 
+	mux.HandleFunc("POST /api/playlists/edit", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			app.PlaylistEdit
+			Restart bool `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		var res *app.PlaylistEditResult
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { res, err = a.EditPlaylists(req.PlaylistEdit); return })
+		reply(w, res, err)
+	})
+	mux.HandleFunc("POST /api/playlists/undo", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Backup  string `json:"backup"`
+			Restart bool   `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		err := a.WithRekordboxClosed(req.Restart, func() error { return a.RestoreBackup(req.Backup) })
+		reply(w, map[string]bool{"ok": true}, err)
+	})
+	mux.HandleFunc("POST /api/sc/maybe", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Playlist string `json:"playlist"`
+			SCID     int64  `json:"scId"`
+			Same     bool   `json:"same"`
+			Restart  bool   `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		err := a.WithRekordboxClosed(req.Restart, func() error { return a.ResolveMaybe(req.Playlist, req.SCID, req.Same) })
+		reply(w, map[string]bool{"ok": true}, err)
+	})
+	mux.HandleFunc("POST /api/upgrade/swap", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID      string `json:"id"`
+			Path    string `json:"path"`
+			Restart bool   `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		var res *app.CleanupResult
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { res, err = a.SwapUpgrade(req.ID, req.Path); return })
+		reply(w, res, err)
+	})
+	mux.HandleFunc("POST /api/upgrade/look", func(w http.ResponseWriter, r *http.Request) {
+		a.FindBetterCopies()
+		reply(w, map[string]bool{"ok": true}, nil)
+	})
+	mux.HandleFunc("GET /api/missing/find", func(w http.ResponseWriter, r *http.Request) {
+		m, err := a.FindMoved()
+		if m == nil {
+			m = []app.Moved{}
+		}
+		reply(w, m, err)
+	})
+	mux.HandleFunc("POST /api/missing/relocate", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Moves   map[string]string `json:"moves"`
+			Restart bool              `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		err := a.WithRekordboxClosed(req.Restart, func() error { return a.Relocate(req.Moves) })
+		reply(w, map[string]int{"relocated": len(req.Moves)}, err)
+	})
+	mux.HandleFunc("POST /api/sc/stop", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			URL string `json:"url"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		reply(w, map[string]bool{"ok": true}, a.StopSyncing(req.URL))
+	})
 	mux.HandleFunc("POST /api/sc/relink", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Playlist string `json:"playlist"`
@@ -374,10 +466,24 @@ func (s *server) routes(mux *http.ServeMux) {
 			return
 		}
 		u, err := a.Upgrades()
-		if u == nil {
-			u = []*analyze.Upgrade{}
+		// Only links confirmed on the track's SoundCloud page (its download
+		// button, its description, its buy button): no store searches.
+		type upRow struct {
+			*analyze.Upgrade
+			SC     *soundcloud.Track `json:"sc,omitempty"`
+			ID     string            `json:"id,omitempty"` // the library track
+			Better *app.BetterCopy   `json:"better,omitempty"`
 		}
-		reply(w, u, err)
+		sc := a.SCTracksByPath()
+		rows := []upRow{}
+		for _, x := range u {
+			row := upRow{Upgrade: x, SC: sc[filepath.Clean(x.Path)]}
+			if t := a.TrackByPath(x.Path); t != nil {
+				row.ID, row.Better = t.ID, a.BetterFor(t.ID)
+			}
+			rows = append(rows, row)
+		}
+		reply(w, rows, err)
 	})
 	mux.HandleFunc("POST /api/quarantine", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -509,13 +615,17 @@ type Row struct {
 	Path     string  `json:"path,omitempty"`
 	Missing  bool    `json:"missing,omitempty"` // file not on disk
 	// NoAccess: the file may well be there, but the system won't let SuperSync read it.
-	NoAccess bool   `json:"noAccess,omitempty"`
-	Stream   string `json:"stream,omitempty"` // streaming service, for tracks with no file
+	NoAccess bool `json:"noAccess,omitempty"`
+	// Better is a better-quality copy found on disk (not in the library yet).
+	Better     *app.BetterCopy `json:"better,omitempty"`
+	MissingWhy string          `json:"missingWhy,omitempty"`
+	Stream     string          `json:"stream,omitempty"` // streaming service, for tracks with no file
 
 	// Rows of SoundCloud-imported playlists.
 	SC     *soundcloud.Track `json:"sc,omitempty"`
 	Status string            `json:"status,omitempty"` // have, downloaded, maybe, missing, failed
 	Note   string            `json:"note,omitempty"`
+	Maybe  string            `json:"maybe,omitempty"` // a file that might be this track
 }
 
 func (s *server) row(t *rbdb.Track) *Row {
@@ -526,6 +636,7 @@ func (s *server) row(t *rbdb.Track) *Row {
 	if r.Title == "" {
 		r.Title = strings.TrimSuffix(filepath.Base(t.Path), filepath.Ext(t.Path))
 	}
+	r.Better = s.app.BetterFor(t.ID)
 	switch {
 	case t.Stream != "":
 		r.Stream, r.Tier, r.Kbps, r.Format = t.Stream, "stream", 0, ""
@@ -536,6 +647,9 @@ func (s *server) row(t *rbdb.Track) *Row {
 		if _, err := os.Stat(t.Path); err != nil {
 			r.Missing = true
 			r.NoAccess = os.IsPermission(err)
+			if !r.NoAccess {
+				r.MissingWhy = app.MissingReason(t.Path)
+			}
 		}
 	}
 	return r
@@ -619,7 +733,7 @@ func (s *server) scRows(sp *app.SCPlaylist, add func(*Row)) {
 		} else {
 			r = &Row{Title: e.SC.Title, Artist: e.SC.Uploader, Length: int(e.SC.DurationMS / 1000)}
 		}
-		r.SC, r.Status, r.Note = e.SC, e.Status, e.Note
+		r.SC, r.Status, r.Note, r.Maybe = e.SC, e.Status, e.Note, e.Maybe
 		if r.ID != "" && r.Status != "downloaded" {
 			r.Status = "have"
 		}

@@ -158,13 +158,52 @@ func (l *Library) Child(parent *LibNode, name string, folder bool) *LibNode {
 			return c
 		}
 	}
-	id := strconv.Itoa(len(parent.Children))
-	if parent.ID != "root" {
-		id = parent.ID + "/" + id
+	// An ID no sibling has (deleting a playlist leaves gaps).
+	id := ""
+	for i := len(parent.Children); ; i++ {
+		id = strconv.Itoa(i)
+		if parent.ID != "root" {
+			id = parent.ID + "/" + id
+		}
+		if l.Node(id) == nil {
+			break
+		}
 	}
 	n := &LibNode{ID: id, Name: name, Folder: folder}
 	parent.Children = append(parent.Children, n)
 	return n
+}
+
+// Parent is the node containing id (nil for the root or an unknown id).
+func (l *Library) Parent(id string) *LibNode {
+	var find func(n *LibNode) *LibNode
+	find = func(n *LibNode) *LibNode {
+		for _, c := range n.Children {
+			if c.ID == id {
+				return n
+			}
+			if f := find(c); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+	return find(l.Root)
+}
+
+// Delete removes a playlist or folder (tracks stay in the collection).
+func (l *Library) Delete(id string) bool {
+	p := l.Parent(id)
+	if p == nil {
+		return false
+	}
+	for i, c := range p.Children {
+		if c.ID == id {
+			p.Children = append(p.Children[:i], p.Children[i+1:]...)
+			return true
+		}
+	}
+	return false
 }
 
 // Save writes the library atomically.

@@ -15,7 +15,7 @@ import (
 func (a *App) Background(stop <-chan struct{}) {
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
-	var closedSince time.Time
+	var closedSince, lastBetter time.Time
 	for {
 		select {
 		case <-stop:
@@ -23,6 +23,11 @@ func (a *App) Background(stop <-chan struct{}) {
 		case <-tick.C:
 		}
 		a.Refresh()
+		// Every few minutes, look for better copies the user has downloaded.
+		if time.Since(lastBetter) > 5*time.Minute && a.Lib != nil {
+			lastBetter = time.Now()
+			go a.FindBetterCopies()
+		}
 
 		if a.Cfg.AutoApply && len(a.PendingChanges()) > 0 && a.Src != nil {
 			if rbdb.Running() {

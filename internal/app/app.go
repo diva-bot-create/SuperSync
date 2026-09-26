@@ -104,6 +104,7 @@ type App struct {
 	State    *State
 	jobs     map[string]*Job
 	cuePlans map[analyze.Pair]*analyze.CueTransfer // cleared on rescan
+	better   map[string]*BetterCopy                // track ID -> a better copy found on disk
 }
 
 func New() *App {
@@ -258,6 +259,7 @@ func (a *App) Scan(progress library.Progress) error {
 	a.mu.Lock()
 	a.Lib, a.cuePlans = lib, nil
 	a.mu.Unlock()
+	go a.FindBetterCopies()
 	return nil
 }
 

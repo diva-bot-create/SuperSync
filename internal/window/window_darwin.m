@@ -218,6 +218,15 @@ void ssFocus(void) {
   });
 }
 
+// ssEdit sends a standard edit command (paste:, cut:, copy:, selectAll:,
+// undo:, redo:) to whatever has focus: the text field in the page.
+void ssEdit(const char *sel) {
+  NSString *s = [NSString stringWithUTF8String:sel];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [NSApp sendAction:NSSelectorFromString(s) to:nil from:nil];
+  });
+}
+
 void ssClose(void) {
   dispatch_async(dispatch_get_main_queue(), ^{
     [NSApp terminate:nil];
