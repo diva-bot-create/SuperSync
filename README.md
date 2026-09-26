@@ -1,186 +1,141 @@
 # SuperSync
 
-Your rekordbox library, in step with your SoundCloud playlists. SuperSync opens rekordbox's own
-library directly: tracks, playlists, hot cues, memory cues and loops. It plays your tracks, and it
-turns SoundCloud playlists into rekordbox playlists in one go.
+**Keep your rekordbox library in step with your SoundCloud playlists, without the duplicates.**
 
-- **Library**: browse the collection and playlists, search, and play tracks with a waveform that
-  shows every hot cue (A–H), memory cue and loop. Click a cue to play from it; keys 1–8 jump to
-  hot cues.
-- **Quality tiers**: every track is graded **LOW** (under 128 kbps), **NORMAL** (128), **HQ** (256)
-  or **UHQ** (over 256 or lossless). Files that were converted up from a worse copy are graded as
-  what they really are.
-- **Add a SoundCloud (or YouTube) playlist**: SuperSync creates the playlist inside a *SoundCloud*
-  (or *YouTube*) folder in your rekordbox library and keeps it synced. Its **Download** button
-  picks up tracks added to the playlist since last time:
-  - Tracks you already have are linked.
-  - Tracks you don't have are downloaded and added: the artist's original file when they turned
-    on SoundCloud's download button and you've set your SoundCloud login token, otherwise the
-    MP3 stream (usually 128 kbps, so it shows as a rip worth upgrading).
-  - Tracks with no MP3 stream (a few only stream as AAC/Opus, or as a 30 s preview) are listed
-    with their free-download or buy link.
-  In playlists imported from SoundCloud, any track below UHQ gets a button that goes where
-  SoundCloud's own button goes: the track's download (SoundCloud requires a login there) or the
-  buy / free-download link.
-- **Download a playlist**: `supersync download <url>` saves a whole SoundCloud or YouTube
-  playlist as tagged MP3s into *SoundCloud/<playlist>* or *YouTube/<playlist>* in your download
-  folder (`--out DIR` to put them elsewhere, `--missing` for only the tracks you don't have).
-  Re-running it only fetches what's new. YouTube audio is converted from its ~128 kbps AAC inside
-  SuperSync; nothing else needs installing.
-- **Duplicates**: finds the same track saved more than once and suggests keeping the best copy.
-  It can carry your rekordbox cues over to the copy you keep.
-- **Upgrades**: tracks worth buying properly, including fake 320s and WAVs made from MP3s.
+You build a playlist on SoundCloud of what you want to play. Then you download or buy the
+tracks, drop them into your music folder, and add them to rekordbox by hand. Do that for a few
+playlists and you end up re-downloading or re-buying songs you already have, with copies of the
+same track scattered around and cue points on the wrong one.
 
-**How SuperSync treats your rekordbox library.** It reads rekordbox's database (`master.db`)
-directly. It only ever writes to it while rekordbox is closed. Before writing, it backs up the
-database and `masterPlaylists6.xml`, keeping the last 10 backups in SuperSync's data folder. It
-checks its edited copy before swapping it in. If rekordbox is open when an import finishes,
-SuperSync keeps the change until you close rekordbox and click **Apply**. Without rekordbox
-installed, SuperSync keeps its own library as `SuperSync Library.xml` in your download folder, which
-rekordbox can import later.
+SuperSync does that job for you:
 
-**What SuperSync downloads.** Only tracks whose artist has enabled SoundCloud's download button.
-With your SoundCloud login token (Settings, optional) that's the artist's original file (often a
-WAV). Without it, it's the MP3 stream.
+- **Paste a SoundCloud playlist link and it becomes a rekordbox playlist.** Songs you already
+  own are linked instead of downloaded again. Missing songs are downloaded into your music folder
+  and added. When the SoundCloud playlist grows, one click (or an automatic schedule) brings the
+  new songs in. YouTube playlists work too.
+- **It never downloads a song you already have**, even when the SoundCloud title is a mess like
+  `H0t 1n H3r3 (JOHNY GAMBLE EDIT) [FREE DL]`.
+- **It finds duplicates and cleans them up.** It keeps the best-quality copy and moves your
+  playlists, play history and cue points over to it, lined up to the millisecond. The extra
+  files go into a separate folder rather than being deleted, and one click undoes the whole thing.
+- **It shows the quality of every track at a glance**, and tells you which ones are worth
+  buying properly, including "320s" and WAVs that were secretly made from a 128 kbps rip.
+- **You can browse and play your library**, with rekordbox's own waveforms, beatgrids, hot cues,
+  memory cues and loops.
 
-## Getting it onto your DJ computer
+## Download
 
-Copy the right file from `dist/` (build it with `scripts/build.sh`):
+Get the latest version from the **[Releases page](../../releases/latest)**.
 
-| Computer | File |
+| Your computer | Download |
 | --- | --- |
-| Mac (Apple Silicon or Intel) | `SuperSync-mac` |
-| Windows | `SuperSync-windows.exe` (`-arm64` for ARM laptops) |
-| Linux | `supersync-linux-amd64` / `-arm64` |
+| Mac (Apple Silicon or Intel) | `SuperSync-mac.zip` |
+| Windows | `SuperSync-windows.zip` |
 
-**Mac:** the first time, right-click the file → **Open** → **Open** (it isn't signed by an Apple
-developer account, so a plain double-click is blocked once). Or in Terminal:
-`xattr -d com.apple.quarantine SuperSync-mac`.
+There's nothing to install. Unzip it and double-click **SuperSync**.
 
-**Windows:** if SmartScreen appears, click **More info → Run anyway**.
+**Mac, first time only.** SuperSync isn't registered with Apple yet, so macOS blocks it the first
+time it's opened:
+1. Double-click SuperSync and click **Done** on the warning.
+2. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to
+   the SuperSync message.
+3. Double-click SuperSync again and click **Open Anyway**.
 
-## Using it
+**Windows, first time only.** If a blue "Windows protected your PC" box appears, click
+**More info → Run anyway**.
 
-Double-click it. A small window opens (leave it open; close it to quit) and SuperSync opens
-in your browser, on your rekordbox library.
+## Getting started
 
-1. **Settings → Download folder**: where SoundCloud imports are saved (in a `SoundCloud` folder).
-   SuperSync finds rekordbox's library by itself; if yours is somewhere unusual, choose its
-   `master.db` in Settings.
-2. **Library**: pick a playlist in the sidebar.
-   - Click a track to see its waveform, hot cues, memory cues and loops.
-   - Double-click a track, or press Enter, to play it. Space plays and pauses; keys 1–8 jump to
-     hot cues.
-   - The chips at the top filter by quality tier.
-3. **Add SoundCloud playlist**: paste a SoundCloud or YouTube playlist link (secret share links
-   work too). Progress shows track by track. If rekordbox is open, close it and click **Apply** to
-   finish. Synced playlists show a ⟳ SC / ⟳ YT label in the sidebar, which spins while syncing.
-   The **Download** button in a synced playlist's header fetches whatever's new or missing.
-4. In a synced playlist, rows below UHQ, and tracks you don't have yet, show where to get a
-   better copy. **⬇ SoundCloud** opens the track's page (log in, then ⋯ → Download file). The other
-   buttons go to the free-download page or store the uploader linked.
-5. **Duplicates → Clean up**: folds each extra copy into the one you keep, right in your
-   library. Playlists and history switch over, play counts add up, rating/colour/comment carry
-   across, and if the kept copy has no cues they're copied from the extra. SuperSync decodes
-   both files and measures the offset between them (different masters often start a few ms
-   apart; an extended mix can start a minute earlier), checking it at three points through the
-   track. Different edits (a section added or cut in the middle) are detected and their cues left
-   alone. The extra files move to `_SuperSync Duplicates`. **Undo clean-up** restores the library
-   backup and moves the files back.
-6. **Settings → Automatic sync**: re-sync every SoundCloud/YouTube playlist every hour, 6 hours
-   or day while SuperSync is open, or **Sync all now**.
+When you open SuperSync, a small window appears (on Mac, a Terminal window). Leave it open while
+you use SuperSync; closing it quits the app. SuperSync itself opens in your web browser. It runs
+only on your computer, and nothing is uploaded anywhere.
 
-### rekordbox being open
+1. SuperSync finds your rekordbox library by itself and shows it: your playlists on the left,
+   tracks on the right.
+2. Go to **Settings → Download folder** and choose where new downloads should go, for example
+   your main music folder.
+3. Click **＋ Add SoundCloud playlist**, paste the playlist link (secret links work too), and
+   watch it fill in, track by track.
 
-rekordbox holds its library open and would overwrite outside changes, so SuperSync only writes
-while it's closed. Changes made while it's open wait in the sidebar. You can:
+You don't need rekordbox installed to try it. Without rekordbox, SuperSync keeps its own library,
+which rekordbox can import later.
 
-- close rekordbox and click **Apply now**;
-- turn on **Add waiting changes as soon as it's closed** in Settings; or
-- click **Restart rekordbox & apply…**, or clean up duplicates while it's open. SuperSync first
-  shows a **Quit rekordbox?** confirmation, and nothing is quit unless you click
-  **Quit rekordbox & continue**. It then asks rekordbox to quit normally. If rekordbox is still open
-  a few seconds later (for example because it's showing a dialog), SuperSync force-quits it. It
-  then backs up the library, writes the changes, and opens rekordbox again, which reads the new
-  library as it starts. Don't use this mid-set.
+## What you can do
 
-SuperSync never quits rekordbox on its own.
+### Sync playlists from SoundCloud and YouTube
 
-Everything also works from a terminal: `supersync help`.
+Synced playlists appear in your rekordbox library inside a **SoundCloud** or **YouTube** folder,
+marked **⟳ SC** or **⟳ YT** in SuperSync's sidebar. Open one and click **Sync** to pick up songs
+added since last time, or turn on **Settings → Automatic sync** (every hour, 6 hours or day)
+while SuperSync is open.
 
-```
-supersync library                                   # the library and its playlists
-supersync import https://soundcloud.com/you/sets/friday
-supersync apply                                     # finish an import that waited for rekordbox to close
-supersync scan                                      # read files: quality tiers, upscale checks
-supersync dupes                                     # list duplicates; add --move to move the extras
-supersync cues --xml cues.xml                       # carry cue points to the copies you keep
-supersync upgrades --min-kbps 320
-```
+What gets downloaded:
+- The artist's own file when they've switched on SoundCloud's download button. This is often a
+  WAV, but only if you've added your SoundCloud login in Settings; the instructions are on that
+  page.
+- Otherwise, the SoundCloud stream, usually 128 kbps. It's marked as low quality so you know it's
+  worth replacing.
+- Songs that can't be downloaded at all are listed with a link to the artist's free-download or
+  buy page.
 
-## How matching works
+### See the quality of every track
 
-SoundCloud titles are messy, so both sides are normalized before comparing:
+Every track is labelled **LOW** (under 128 kbps), **NORMAL** (128), **HQ** (256) or **UHQ**
+(above 256, or lossless like WAV, AIFF and FLAC). Click the labels at the top of a playlist to show
+only those tracks. In synced playlists, anything below UHQ has a button that takes you to where you
+can get a better copy.
 
-- promo noise is dropped (`[FREE DL]`, `OUT NOW`, `PREMIERE:`, `Tech House |` prefixes, label names);
-- leetspeak used to dodge copyright bots is decoded (`H0t 1n H3r3` → hot in here);
-- accents, `feat.`, `&`/`x`, and one-letter typos are tolerated;
-- the uploader is treated as a *possible* artist only, since it's often a channel or label;
-- the version is kept: `(Hammer Remix)` is a different recording from the original or from
-  `(Ewan McVicar Remix)`, while `(Original Mix)`, `(Extended Mix)` and `(Radio Edit)` count as the
-  same song;
-- file tags and the filename are both used, so untagged downloads still match.
+SuperSync also listens for fakes. A "320 kbps" MP3 or a WAV that was made from a low-quality
+download is labelled as what it really is, and shows up under **Upgrades**.
 
-### Spotting upscaled files
+### Clean up duplicates
 
-After a scan, every file that claims to be high quality (lossless, or 224 kbps and up) gets a
-one-time spectrum check in the background. Lossy encoders cut the highest frequencies at a point set
-by the bitrate: about 16–17 kHz for 128 kbps, 18.6 kHz for 192, and 20+ kHz for 256–320. A sharp
-cliff below 19 kHz in a "320" or a WAV means it was made from a worse file. It's shown as e.g.
-"MP3 320 → ~128", ranked as what it really is in Duplicates, and listed in Upgrades. Gentle
-roll-offs (dark masters, old records) aren't flagged, because only a brick-wall cliff counts.
-It can't catch a transcode from a source that had no lowpass. `supersync info FILE` shows the
-check for any file.
+The **Duplicates** tab lists every song you have more than once and picks the best copy to keep.
+**Clean up** (or **Clean up all**) then does the following:
+- Your playlists and history switch to the copy you keep, and play counts are added together.
+- Cue points and loops move over from the extra copy, lined up precisely even when the two files
+  start at slightly different times.
+- The extra files move into a `_SuperSync Duplicates` folder inside your music folder.
 
-### Cue timing
+Copies with different lengths (like a radio edit and an extended mix) are left alone unless you
+clean them up one at a time. **Undo clean-up** puts everything back.
 
-rekordbox skips an MP3's LAME/Xing header frame but keeps the encoder delay (about 25 ms), so
-SuperSync decodes MP3s the same way. Get this wrong and cues move 26 ms, the classic
-"Traktor → rekordbox" problem. MP3, FLAC, WAV and AIFF are decoded built-in. AAC, ALAC and Opus
-need ffmpeg installed, and lossy AAC/Opus transfers are marked "check one cue" because rekordbox's
-handling of their encoder lead-in isn't verified.
+### Browse and play your library
 
-Duplicates use a stricter version of the same rules. Copies whose lengths differ by more than
-15 seconds are flagged as "different lengths" (probably a radio edit and an extended mix) and are
-never moved by "Move all".
+Click any track to see its waveform, beatgrid, hot cues, memory cues and loops. Double-click to
+play it, click a cue to jump to it, or press keys 1–8 for hot cues A–H. Space plays and pauses.
 
-## Where things are stored
+## Keeping your library safe
 
-- Settings and your Same/Not-same answers: `~/Library/Application Support/SuperSync/` (Mac),
-  `%AppData%\SuperSync\` (Windows), `~/.config/SuperSync/` (Linux).
-- The scan cache is in the matching cache folder. Delete it any time; it's rebuilt on the next scan.
-- Moved duplicates, and `moves.jsonl` (the undo log), are in `<music folder>/_SuperSync Duplicates/`.
+- **Everything is backed up.** Before SuperSync changes your rekordbox library, it saves a copy of
+  it. The last 10 copies are kept.
+- **Nothing is deleted.** Duplicate files are moved, not deleted, and can be put back.
+- **rekordbox must be closed for changes to be saved.** While it's open, SuperSync keeps your
+  changes waiting, and a box in the sidebar shows what's waiting. To apply them, either:
+  - close rekordbox and click **Apply now**;
+  - switch on **Settings → Add waiting changes as soon as it's closed**; or
+  - click **Restart rekordbox & apply…**. SuperSync asks you to confirm first, then closes
+    rekordbox (forcing it if it doesn't close within a few seconds), saves the changes, and opens
+    rekordbox again. **Don't do this during a set.**
 
-## Development
+SuperSync never closes rekordbox without asking.
 
-Go 1.26+, no cgo. `go test ./...` (the audio tests use ffmpeg when it's installed).
-The rekordbox database tests use pyrekordbox's real test library (MIT). Download
-`.testdata/rekordbox 6/master_locked.db`, `master_unlocked.db` and `backup/masterPlaylists6.xml`
-from github.com/dylanljones/pyrekordbox and set `REKORDBOX_TESTDATA` to that folder.
+## Questions
 
-```
-internal/audio       tag + stream readers: MP3, FLAC, AIFF, WAV, M4A/ALAC, Ogg/Opus
-internal/match       title normalization and scoring
-internal/library     folder scan with incremental cache
-internal/soundcloud  playlist fetching (public web API, auto client_id)
-internal/rekordbox   collection XML reader, playlist XML writer
-internal/sqlcipher   SQLCipher 4 page decryption/encryption (rekordbox's master.db)
-internal/rbdb        rekordbox library: read tracks/playlists/cues, write playlists and tracks safely
-internal/app         library source (rekordbox or SuperSync XML), SoundCloud import jobs, tiers
-internal/analyze     duplicates, upgrades, quarantine/undo, cue transfer plans
-internal/spectrum    encoder-cutoff detection for upscaled files
-internal/dsp         FFT
-internal/align       FFT cross-correlation to measure the offset between two recordings
-internal/app         shared logic for the CLI and the web UI
-internal/web         localhost server + the embedded single-page UI
-```
+**Does it work with my existing folders?** Yes. It reads whatever is in your rekordbox library,
+wherever the files are. New downloads go into the download folder you choose.
+
+**Will it mess up my cue points?** No. Cue points are only moved during a duplicate clean-up. If
+the two copies are genuinely different edits, the cues are left where they are. Either way you can
+undo.
+
+**Why do some downloads say LOW or NORMAL?** That's what SoundCloud streams. Add your SoundCloud
+login in Settings to get artists' original files where they allow downloads. For the rest, the
+buttons next to each track take you to where you can buy or download a better copy.
+
+**Where are my settings kept?** On your computer only:
+`~/Library/Application Support/SuperSync/` on Mac, `%AppData%\SuperSync\` on Windows.
+
+---
+
+Built for DJs who dig on SoundCloud. Developer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
