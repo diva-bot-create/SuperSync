@@ -113,7 +113,7 @@ better copy, using the links the uploader put on SoundCloud. Once you've downloa
 music folder or Downloads), SuperSync notices within a few minutes and the label gets a **↑**.
 Click it and choose **Swap in**. The better copy then takes the old one's place in every playlist
 and its history, your cues move across lined up to the new file, and the old file goes to
-`_SuperSync Duplicates`. **Undo** puts everything back. If SuperSync hasn't spotted the file, choose
+the Trash (or wherever **Settings → Clean-up** says). **Undo** puts the library back. If SuperSync hasn't spotted the file, choose
 **I have a better copy…** and pick it.
 
 **Songs you already have.** When a playlist syncs, songs already in your library are added as they
@@ -131,7 +131,7 @@ The **Duplicates** tab lists every song you have more than once and picks the be
 - Your playlists and history switch to the copy you keep, and play counts are added together.
 - Cue points and loops move over from the extra copy, lined up precisely even when the two files
   start at slightly different times.
-- The extra files move into a `_SuperSync Duplicates` folder inside your music folder.
+- The extra files go to the Trash (Recycle Bin on Windows). In **Settings → Clean-up** you can choose to delete them permanently instead, or keep them in a `_SuperSync Duplicates` folder.
 
 Copies with different lengths (like a radio edit and an extended mix) are left alone unless you
 clean them up one at a time. **Undo clean-up** puts everything back.
@@ -145,7 +145,7 @@ play it, click a cue to jump to it, or press keys 1–8 for hot cues A–H. Spac
 
 - **Everything is backed up.** Before SuperSync changes your rekordbox library, it saves a copy of
   it. The last 10 copies are kept.
-- **Nothing is deleted.** Duplicate files are moved, not deleted, and can be put back.
+- **Nothing is lost by accident.** Cleaned-up duplicate files go to the Trash (Recycle Bin), where you can get them back, unless you choose permanent deletion in Settings.
 - **rekordbox must be closed for changes to be saved.** While it's open, SuperSync keeps your
   changes waiting, and a box in the sidebar shows what's waiting. To apply them, either:
   - close rekordbox and click **Apply now**;

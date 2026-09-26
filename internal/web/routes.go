@@ -43,6 +43,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			AutoUpdate  *bool   `json:"autoUpdate"`
 			KeepRunning *bool   `json:"keepRunning"`
 			OpenAtLogin *bool   `json:"openAtLogin"`
+			Cleanup     *string `json:"cleanupAction"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -77,6 +78,15 @@ func (s *server) routes(mux *http.ServeMux) {
 			a.Cfg.QuitOnClose = !*req.KeepRunning
 			window.SetKeepRunning(*req.KeepRunning)
 			err = a.Cfg.Save()
+		}
+		if err == nil && req.Cleanup != nil {
+			switch *req.Cleanup {
+			case "trash", "delete", "folder":
+				a.Cfg.CleanupAction = *req.Cleanup
+				err = a.Cfg.Save()
+			default:
+				err = errors.New("unknown clean-up choice")
+			}
 		}
 		if err == nil && req.OpenAtLogin != nil {
 			if err = autostart.Set(*req.OpenAtLogin); err == nil {
@@ -518,7 +528,9 @@ func (s *server) routes(mux *http.ServeMux) {
 			Restart bool `json:"restart"`
 		}
 		decodeOptional(r, &req)
-		reply(w, map[string]bool{"ok": true}, a.WithRekordboxClosed(req.Restart, a.UndoCleanup))
+		var note string
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { note, err = a.UndoCleanupNote(); return })
+		reply(w, map[string]any{"ok": true, "note": note}, err)
 	})
 	mux.HandleFunc("POST /api/pending/discard", func(w http.ResponseWriter, r *http.Request) {
 		a.DiscardPending()
@@ -1023,6 +1035,7 @@ type state struct {
 	Update       update.Status   `json:"update"`
 	App          bool            `json:"app"`                    // in SuperSync's own window
 	DownloadsDir string          `json:"downloadsDir,omitempty"` // the user's Downloads folder, where new files usually land
+	Cleanup      string          `json:"cleanupAction"`          // trash, delete or folder
 	KeepRunning  bool            `json:"keepRunning"`
 	OpenAtLogin  bool            `json:"openAtLogin"`
 	CanAutorun   bool            `json:"canAutorun"`
@@ -1046,6 +1059,9 @@ func (s *server) state() state {
 	st.LastSync = a.State.LastSyncTime()
 	st.Update, st.AutoUpdate, st.App = s.upd.Status(), !a.Cfg.NoAutoUpdate, s.inWindow
 	st.KeepRunning, st.OpenAtLogin, st.CanAutorun = !a.Cfg.QuitOnClose, a.Cfg.OpenAtLogin, autostart.Supported()
+	if st.Cleanup = a.Cfg.CleanupAction; st.Cleanup == "" {
+		st.Cleanup = "trash"
+	}
 	if h, err := os.UserHomeDir(); err == nil {
 		if d := filepath.Join(h, "Downloads"); dirExists(d) {
 			st.DownloadsDir = d

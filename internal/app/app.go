@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"supersync/internal/trash"
 	"sync"
 	"time"
 
@@ -41,6 +43,10 @@ type Config struct {
 	QuitOnClose bool `json:"quitOnClose,omitempty"`
 	// OpenAtLogin starts SuperSync (in the background) when you log in.
 	OpenAtLogin bool `json:"openAtLogin,omitempty"`
+	// CleanupAction is what happens to the extra files when duplicates are
+	// cleaned up: "trash" (the default: Trash / Recycle Bin), "delete"
+	// (permanently) or "folder" (kept in _SuperSync Duplicates).
+	CleanupAction string `json:"cleanupAction,omitempty"`
 	// NotDuplicates: pairs of files the user said aren't duplicates.
 	NotDuplicates []string `json:"notDuplicates,omitempty"`
 	// Decisions records the user's answers for uncertain matches:
@@ -343,6 +349,45 @@ func (a *App) quarantineDir() (string, error) {
 
 // Quarantine moves files into the duplicates folder and rescans.
 func (a *App) Quarantine(paths []string) ([]analyze.Move, error) {
+	var moves []analyze.Move
+	var err error
+	switch a.Cfg.CleanupAction {
+	case "delete":
+		for _, p := range paths {
+			if err = os.Remove(p); err != nil && !os.IsNotExist(err) {
+				break
+			}
+			err = nil
+			moves = append(moves, analyze.Move{Time: time.Now(), From: p}) // gone: nothing to undo
+		}
+	case "", "trash":
+		for _, p := range paths {
+			to, terr := trash.Move(p)
+			if errors.Is(terr, trash.ErrUnsupported) {
+				a.Cfg.CleanupAction = "folder" // no Trash here: keep them in the folder instead
+				rest, qerr := a.quarantine(paths[len(moves):])
+				moves, err = append(moves, rest...), qerr
+				break
+			}
+			if terr != nil {
+				err = fmt.Errorf("moving %s to the Trash: %w", filepath.Base(p), terr)
+				break
+			}
+			moves = append(moves, analyze.Move{Time: time.Now(), From: p, To: to}) // To is "" in the Recycle Bin
+		}
+	default:
+		moves, err = a.quarantine(paths)
+	}
+	if len(moves) > 0 {
+		if serr := a.Scan(nil); err == nil {
+			err = serr
+		}
+	}
+	return moves, err
+}
+
+// quarantine moves files into the _SuperSync Duplicates folder.
+func (a *App) quarantine(paths []string) ([]analyze.Move, error) {
 	q, err := a.quarantineDir()
 	if err != nil {
 		return nil, err
@@ -351,13 +396,7 @@ func (a *App) Quarantine(paths []string) ([]analyze.Move, error) {
 	if a.Lib != nil {
 		root = a.Lib.Root
 	}
-	moves, err := analyze.Quarantine(q, root, paths)
-	if len(moves) > 0 {
-		if serr := a.Scan(nil); err == nil {
-			err = serr
-		}
-	}
-	return moves, err
+	return analyze.Quarantine(q, root, paths)
 }
 
 // Undo restores every quarantined file and rescans.

@@ -541,7 +541,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <div class="row" style="align-items:flex-start">
       <div class="grow">
         <h2>Duplicates</h2>
-        <p class="sub">Tracks that appear more than once. The best-quality copy is selected to keep. <b>Clean up</b> folds the extras into it in your library: its playlists and history switch over, play counts add up, and your cues move across, lined up to the new file. The extra files move to a <span class="mono">_SuperSync Duplicates</span> folder, so nothing is deleted, and it can all be undone.</p>
+        <p class="sub">Tracks that appear more than once. The best-quality copy is selected to keep. <b>Clean up</b> folds the extras into it in your library: its playlists and history switch over, play counts add up, and your cues move across, lined up to the new file. <span id="dupeWhere"></span> <b>Undo clean-up</b> puts the library back.</p>
       </div>
       <div class="row">
         <button id="undoBtn" class="hidden">Restore moved files</button>
@@ -612,6 +612,18 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoApply" style="accent-color:var(--accent)"> Add waiting changes to rekordbox as soon as it's closed</label>
         <div class="muted" id="syncState" style="margin-top:8px;font-size:12.5px"></div>
         <div class="muted" style="margin-top:6px;font-size:12.5px">SuperSync never quits rekordbox on its own. While rekordbox is open, changes wait until you close it, or until you click <b>Restart rekordbox &amp; apply</b>.</div>
+      </div>
+      <div class="panel setting">
+        <h3>Clean-up</h3>
+        <div class="muted">When you clean up duplicates (or swap in a better copy), the extra files…</div>
+        <div class="row" style="margin-top:12px">
+          <select id="cleanupAction">
+            <option value="trash">go to the Trash</option>
+            <option value="delete">are deleted permanently</option>
+            <option value="folder">are kept in a _SuperSync Duplicates folder</option>
+          </select>
+        </div>
+        <div class="muted" id="cleanupNote" style="font-size:12.5px;margin-top:8px"></div>
       </div>
       <div class="panel setting" id="appPanel">
         <h3>App</h3>
@@ -1067,6 +1079,13 @@ async function refresh() {
   $("#autoApply").checked = !!S.autoApply;
   paintUpdate();
   paintApp();
+  $("#cleanupAction").value = S.cleanupAction || "trash";
+  $("#cleanupAction option[value=trash]").textContent = "go to the " + (IS_MAC ? "Trash" : "Recycle Bin");
+  $("#cleanupNote").textContent = {
+    trash: "You can get a file back from there. Undo clean-up restores your library" + (IS_MAC ? " and puts the files back." : "; restore the files from the Recycle Bin."),
+    delete: "They're gone for good. Undo clean-up can restore your library's entries, but not the files.",
+    folder: "Nothing is deleted. Undo clean-up puts the files back where they were.",
+  }[S.cleanupAction || "trash"];
   $("#syncState").textContent = (S.lastSync ? "Last synced " + new Date(S.lastSync).toLocaleString() + ". " : "") + (S.nextSync ? "Next " + new Date(S.nextSync).toLocaleString() + "." : "");
   renderPending();
   paintSyncLabels();
@@ -1968,6 +1987,7 @@ function paintApp() {
   $("#openAtLogin").checked = !!S.openAtLogin;
   $("#openAtLoginRow").classList.toggle("hidden", !S.canAutorun);
 }
+$("#cleanupAction").onchange = e => saveSetting({ cleanupAction: e.target.value });
 $("#keepRunning").onchange = e => saveSetting({ keepRunning: e.target.checked });
 $("#openAtLogin").onchange = e => saveSetting({ openAtLogin: e.target.checked });
 async function quitApp() {
@@ -2193,8 +2213,8 @@ async function swapUpgrade(r, path) {
     const res = await withRekordbox("swap in the better copy", restart => api("upgrade/swap", { id: r.id, path, restart }));
     if (!res) return;
     const cues = res.groups?.[0]?.cuesCopied;
-    toast(`Upgraded “${r.title}”${cues ? `; ${cues} cue${cues === 1 ? "" : "s"} carried over` : ""}. The old file is in _SuperSync Duplicates.`, "ok", { label: "Undo", run: async () => {
-      try { if (await withRekordbox("undo the swap", restart => api("dupes/undo-cleanup", { restart }))) { toast("Swapped back.", "ok"); await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); } }
+    toast(`Upgraded “${r.title}”${cues ? `; ${cues} cue${cues === 1 ? "" : "s"} carried over` : ""}. The old file is ${cleanupWhere(true)}.`, "ok", { label: "Undo", run: async () => {
+      try { const u = await withRekordbox("undo the swap", restart => api("dupes/undo-cleanup", { restart })); if (u) { toast(u.note ? "Swapped back. " + u.note : "Swapped back.", "ok"); await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); } }
       catch (e) { toast(e.message, "err"); }
     } });
     res.groups?.filter(g => g.note).forEach(g => toast(g.note));
@@ -2742,7 +2762,17 @@ function groupHtml(g) {
       <button class="link" data-reveal="${esc(c.path)}" type="button">show</button></label>`).join("")}
     <div class="gwarn">${warnHtml(g)}</div>`;
 }
+// Where cleaned-up extra files go, in words (Settings → Clean-up).
+function cleanupWhere(short) {
+  const trashName = IS_MAC ? "the Trash" : "the Recycle Bin";
+  return {
+    trash: short ? `in ${trashName}` : `The extra files go to ${trashName}, so you can still get one back.`,
+    delete: short ? "deleted" : "The extra files are deleted permanently.",
+    folder: short ? "in _SuperSync Duplicates" : "The extra files move to a _SuperSync Duplicates folder inside your download folder.",
+  }[S.cleanupAction || "trash"];
+}
 function renderDupesChrome() {
+  $("#dupeWhere").textContent = cleanupWhere();
   setCount($("#dupeCount"), groups.length);
   const auto = groups.filter(g => !g.lengthsDiffer);
   const n = auto.reduce((a, g) => a + extras(g).length, 0);
@@ -2886,11 +2916,12 @@ function confirmCleanup(gs) {
   $("#confBody").innerHTML = `<ul class="steps" style="margin-top:0">
       <li>Playlists and history that use an extra copy switch to the kept one. Play counts add up; rating, colour and comment carry over.</li>
       <li>Where the kept copy has no cues, they're copied from the extra, lined up by audio. Different edits are left alone.</li>
-      <li>The extras leave your library, and their files move to <span class="mono">_SuperSync Duplicates</span>.</li>
+      <li>The extras leave your library. ${esc(cleanupWhere())} <button class="link" type="button" onclick="closeDlg($('#confirm')); selectTab('settings')">Change</button></li>
       <li>Your library is backed up first; <b>Undo clean-up</b> puts everything back.</li></ul>
     <ul class="mono" style="padding-left:18px;font-size:12px">${files.map(f => `<li>${esc(f.rel)}</li>`).join("")}</ul>
     ${running ? `<div class="warn">rekordbox is open. You'll be asked before SuperSync quits it.</div>` : ""}`;
-  $("#confYes").textContent = "Clean up";
+  $("#confYes").textContent = S.cleanupAction === "delete" ? "Clean up and delete files" : "Clean up";
+  $("#confYes").classList.toggle("danger", S.cleanupAction === "delete");
   openDlg(d);
   $("#confNo").onclick = () => closeDlg(d);
   $("#confYes").onclick = async () => {
@@ -2917,8 +2948,9 @@ $("#undoBtn").onclick = async () => {
   setBusy(+1);
   try {
     if (S.lastCleanup) {
-      if (!await withRekordbox("undo the clean-up", restart => api("dupes/undo-cleanup", { restart }))) return;
-      toast("Clean-up undone: library and files are back.", "ok");
+      const r = await withRekordbox("undo the clean-up", restart => api("dupes/undo-cleanup", { restart }));
+      if (!r) return;
+      toast(r.note ? "Clean-up undone. " + r.note : "Clean-up undone: library and files are back.", "ok");
     } else {
       const r = await api("undo", {});
       toast(`Restored ${r.restored} file${r.restored === 1 ? "" : "s"}.`, "ok");

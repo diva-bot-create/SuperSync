@@ -53,8 +53,10 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 	if a.Src == nil {
 		return nil, ErrNoSource
 	}
-	if _, err := a.quarantineDir(); err != nil {
-		return nil, err
+	if a.Cfg.CleanupAction == "folder" {
+		if _, err := a.quarantineDir(); err != nil {
+			return nil, err
+		}
 	}
 	res := &CleanupResult{}
 	var ops []MergeOp
@@ -163,6 +165,37 @@ func plural(n int) string {
 // clean-up and moves its files back. It refuses if the library has changed
 // since (restoring would throw that work away).
 func (a *App) UndoCleanup() error {
+	_, err := a.UndoCleanupNote()
+	return err
+}
+
+// UndoCleanupNote is UndoCleanup, plus a note when some files can't be put
+// back by SuperSync (deleted permanently, or in the Recycle Bin).
+func (a *App) UndoCleanupNote() (string, error) {
+	a.State.mu.Lock()
+	lc := a.State.LastCleanup
+	a.State.mu.Unlock()
+	lost := 0
+	if lc != nil {
+		for _, m := range lc.Moves {
+			if m.To == "" {
+				lost++
+			}
+		}
+	}
+	if err := a.undoCleanup(); err != nil {
+		return "", err
+	}
+	switch {
+	case lost > 0 && a.Cfg.CleanupAction == "delete":
+		return fmt.Sprintf("%d file%s had been deleted permanently, so only the library entries came back.", lost, plural(lost)), nil
+	case lost > 0:
+		return fmt.Sprintf("%d file%s are in the Recycle Bin: restore them from there, then click Rescan.", lost, plural(lost)), nil
+	}
+	return "", nil
+}
+
+func (a *App) undoCleanup() error {
 	a.State.mu.Lock()
 	last := a.State.LastCleanup
 	a.State.mu.Unlock()

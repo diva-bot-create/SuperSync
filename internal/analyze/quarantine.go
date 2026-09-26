@@ -173,8 +173,11 @@ func UndoMoves(moves []Move) (int, error) {
 		}
 		restored++
 	}
-	if len(moves) > 0 {
-		pruneLog(filepath.Dir(logPathFor(moves[0].To)), moves)
+	for _, m := range moves {
+		if lp := logPathFor(m.To); m.To != "" && lp != "" {
+			pruneLog(filepath.Dir(lp), moves)
+			break
+		}
 	}
 	return restored, nil
 }
