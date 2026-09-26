@@ -174,6 +174,28 @@ func (s *server) quit() {
 	}()
 }
 
+// QuitRunning asks a running SuperSync to quit (after any library write in
+// progress) and waits for it to go. It reports whether one was running.
+func QuitRunning(port int) bool {
+	if port == 0 {
+		port = defaultPort
+	}
+	if !isRunning(port) {
+		return false
+	}
+	req, _ := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/quit", port), strings.NewReader("{}"))
+	req.Header.Set("X-SuperSync-Token", loadToken())
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req); err == nil {
+		resp.Body.Close()
+	}
+	for i := 0; i < 40 && isRunning(port); i++ {
+		time.Sleep(250 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond) // let the process finish exiting
+	return true
+}
+
 // focusRunning asks an already-running SuperSync to bring its window forward.
 func (s *server) focusRunning(port int) bool {
 	req, _ := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/focus", port), strings.NewReader("{}"))
@@ -365,7 +387,7 @@ func open(u string) {
 	case "darwin":
 		exec.Command("open", u).Start()
 	case "windows":
-		exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
+		shellOpen(u)
 	default:
 		exec.Command("xdg-open", u).Start()
 	}

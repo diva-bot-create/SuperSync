@@ -55,6 +55,7 @@ Commands:
   supersync upgrades                list low-quality tracks worth re-buying
   supersync info <file>...          show what SuperSync reads from audio files
   supersync config                  show settings
+  supersync quit                    close SuperSync if it's running
 
 Settings (any command; they're remembered):
   --music DIR            where downloads go
@@ -96,6 +97,12 @@ func runCmd(cmd string, args []string) {
 	}
 	if cmd == "info" {
 		info(fs.Args())
+		return
+	}
+	if cmd == "quit" {
+		if !web.QuitRunning(*port) {
+			fmt.Println("SuperSync isn't running.")
+		}
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"supersync/internal/sysexec"
 
 	"github.com/hajimehoshi/go-mp3"
 	"github.com/mewkiz/flac"
@@ -385,7 +386,7 @@ func decodeFFmpeg(path string, rate int, m *mixer) error {
 	if rate <= 0 {
 		rate = 48000
 	}
-	cmd := exec.Command(bin, "-v", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", fmt.Sprint(rate), "-")
+	cmd := sysexec.Command(bin, "-v", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", fmt.Sprint(rate), "-")
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

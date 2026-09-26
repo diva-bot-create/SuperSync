@@ -50,7 +50,9 @@ cp "$work"/rsrc_windows_*.syso .
 trap 'rm -rf "$work"; rm -f rsrc_windows_*.syso' EXIT
 win="$work/win"
 mkdir -p "$win"
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS -H windowsgui" -o "$win/SuperSync.exe" .
+# Not stripped (-s -w): stripped, unsigned executables score worse with
+# antivirus heuristics, and the size difference doesn't matter.
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-X main.version=$VERSION -H windowsgui" -o "$win/SuperSync.exe" .
 rm -f rsrc_windows_*.syso
 cp assets/SuperSync.ico "$win/"
 (cd "$win" && zip -q "$OLDPWD/dist/SuperSync-windows.zip" SuperSync.exe)

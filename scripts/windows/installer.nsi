@@ -27,9 +27,12 @@ BrandingText "SuperSync ${VERSION}"
 !insertmacro MUI_LANGUAGE "English"
 
 Section "SuperSync"
-  ; Close a running copy so its file can be replaced.
+  ; Close a running copy so its file can be replaced: ask it to quit first
+  ; (it finishes any library write), and only force it if it's still there.
+  IfFileExists "$INSTDIR\SuperSync.exe" 0 +2
+    nsExec::Exec '"$INSTDIR\SuperSync.exe" quit'
   nsExec::Exec 'taskkill /IM SuperSync.exe /F'
-  Sleep 800
+  Sleep 500
   SetOutPath "$INSTDIR"
   File "${SRC}\SuperSync.exe"
   File "${SRC}\SuperSync.ico"
@@ -53,8 +56,11 @@ SectionEnd
 ; Removes the app and its shortcuts. Your settings, library backups and music
 ; are left alone.
 Section "Uninstall"
+  nsExec::Exec '"$INSTDIR\SuperSync.exe" quit'
   nsExec::Exec 'taskkill /IM SuperSync.exe /F'
-  Sleep 800
+  Sleep 500
+  ; Stop opening at login.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SuperSync"
   Delete "$INSTDIR\SuperSync.exe"
   Delete "$INSTDIR\SuperSync.exe.old"
   Delete "$INSTDIR\SuperSync.ico"

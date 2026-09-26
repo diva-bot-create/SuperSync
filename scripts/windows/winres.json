@@ -19,7 +19,10 @@
         "info": {
           "0409": {
             "CompanyName": "SuperSync",
-            "FileDescription": "SuperSync",
+            "FileDescription": "SuperSync: keeps your rekordbox library in step with your SoundCloud playlists",
+            "LegalCopyright": "Copyright (c) 2026 SuperSync",
+            "Comments": "https://github.com/diva-bot-create/SuperSync",
+            "InternalName": "SuperSync",
             "ProductName": "SuperSync",
             "OriginalFilename": "SuperSync.exe"
           }

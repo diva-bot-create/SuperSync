@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"supersync/internal/sysexec"
 	"sync"
 	"time"
 )
@@ -368,7 +369,7 @@ func stageBundle(ctx context.Context, zr *zip.Reader, bundle, tag string) (strin
 func verifyRuns(ctx context.Context, path, tag string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "help").CombinedOutput()
+	out, err := sysexec.Hide(exec.CommandContext(ctx, path, "help")).CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return fmt.Errorf("the new version didn't start: %v", err)
 	}

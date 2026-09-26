@@ -15,10 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -113,16 +111,7 @@ func optionsDBPath() string {
 }
 
 // Running reports whether the rekordbox app is open.
-func Running() bool {
-	switch runtime.GOOS {
-	case "windows":
-		out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq rekordbox.exe", "/NH").Output()
-		return err == nil && strings.Contains(strings.ToLower(string(out)), "rekordbox.exe")
-	default:
-		// The app's process is "rekordbox"; the background agent is "rekordboxAgent" (harmless).
-		return exec.Command("pgrep", "-x", "rekordbox").Run() == nil
-	}
-}
+func Running() bool { return running() }
 
 // DB is an open, decrypted snapshot of the library.
 type DB struct {
