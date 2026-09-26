@@ -1255,7 +1255,7 @@ function renderSyncBtn(animate) {
   const b = $("#syncBtn"), sc = cur.data?.sc;
   if (!sc) { b.classList.add("hidden"); return; }
   const job = syncing.get(sc.url);
-  const need = cur.data.rows.filter(r => !r.id).length;
+  const need = cur.data.rows.filter(r => !r.id && r.status !== "unavailable" && r.status !== "maybe").length;
   let html;
   if (job) {
     const steps = job.steps || [], total = steps.length;
@@ -1400,9 +1400,15 @@ function tierBadge(r) {
     if (st?.state === "downloading") return `<span class="tier normal dl" title="Downloading"><i style="width:${st.progress > 0 ? Math.round(st.progress * 100) : 30}%"></i>${st.progress > 0 ? Math.round(st.progress * 100) + "%" : "…"}</span>`;
     if (st?.state === "queued") return `<span class="tier none" title="Waiting to download">QUEUED</span>`;
     if (st?.state === "downloaded") return `<span class="tier hq" title="Downloaded; being added to the playlist">ADDING</span>`;
+    // Couldn't be downloaded, whether that was clear upfront (Go+ only, no
+    // download offered) or only on trying (copy-protected, a dropped
+    // connection): FAILED, with the reason.
     const state = st?.state || r.status;
-    if (state === "failed") return `<span class="tier low" title="${esc(st?.note || r.note || "")}">FAILED</span>`;
-    if (state === "skipped") return `<span class="tier none" title="${esc(st?.note || r.note || "")}">NO DOWNLOAD</span>`;
+    if (state === "failed" || state === "skipped" || state === "unavailable") {
+      const why = st?.note || r.note || "";
+      const again = state === "failed" ? " SuperSync tries again on the next sync." : "";
+      return `<span class="tier low" title="${esc(why + again)}">FAILED</span>`;
+    }
     if (r.status === "maybe") return `<span class="tier normal" title="${esc("There's a similar file in your library, but SuperSync isn't sure it's this track (it could be another version). It won't be downloaded until you say. " + (r.maybe ? "Similar file: " + r.maybe : ""))}">MAYBE</span>`;
     return `<span class="tier none" title="${esc(r.note || "Not in your library yet.")}">NEED</span>`;
   }
@@ -1423,7 +1429,7 @@ function tierBadge(r) {
 function canRelink(r) {
   if (r.id || !r.sc || !cur.data?.sc) return false;
   const st = stepFor(r);
-  return st ? ["failed", "skipped"].includes(st.state) : ["failed", "skipped", "missing"].includes(r.status) || !r.status;
+  return st ? ["failed", "skipped"].includes(st.state) : ["failed", "unavailable", "skipped", "missing"].includes(r.status) || !r.status;
 }
 // Where to get a (better) copy, from the track's SoundCloud page: free
 // downloads (SoundCloud's own button, links in the description) and stores.
@@ -1470,7 +1476,7 @@ document.addEventListener("click", e => {
 function playId(r) {
   if (!r) return null;
   if (r.id) return r.missing ? null : r.id;
-  if (r._pid === undefined) r._pid = r.sc && !r.sc.unavailable && !r.sc.goPlus && !r.sc.protected && cur.data?.sc?.source !== "youtube" ? "sc:" + r.sc.id : null;
+  if (r._pid === undefined) r._pid = r.sc && !r.sc.unavailable && !r.sc.goPlus && !r.sc.protected && r.status !== "unavailable" && cur.data?.sc?.source !== "youtube" ? "sc:" + r.sc.id : null;
   return r._pid;
 }
 // A synced playlist's live download state for a row, while it syncs.
@@ -2448,7 +2454,7 @@ function renderJob(j) {
   const total = j.steps?.length || 0, fin = total - (c.queued || 0) - (c.downloading || 0);
   $("#jBar").style.width = (j.status === "fetching" ? 3 : total ? fin / total * 100 : 0) + "%";
   const chip = (k, cls, label) => c[k] ? `<span class="tier ${cls}">${label} ${c[k]}</span>` : "";
-  $("#jSum").innerHTML = chip("have", "uhq", "IN LIBRARY") + chip("downloaded", "hq", "DOWNLOADED") + chip("downloading", "normal", "DOWNLOADING") + chip("maybe", "normal", "MAYBE") + chip("skipped", "none", "NO DOWNLOAD") + chip("failed", "low", "FAILED");
+  $("#jSum").innerHTML = chip("have", "uhq", "IN LIBRARY") + chip("downloaded", "hq", "DOWNLOADED") + chip("downloading", "normal", "DOWNLOADING") + chip("maybe", "normal", "MAYBE") + chip("failed", "low", "FAILED") + chip("skipped", "low", "FAILED");
   const msg = { fetching: `Reading the playlist from ${j.source === "youtube" ? "YouTube" : "SoundCloud"}…`, matching: "Matching against your library…", downloading: "Downloading the tracks you don't have…", applying: "Adding the playlist to your library…" }[j.status] || j.message || "";
   $("#jMsg").textContent = msg;
   // Show the interesting ones first: active, then done, then skipped.

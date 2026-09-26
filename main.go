@@ -177,7 +177,11 @@ func runCmd(cmd string, args []string) {
 			for _, st := range snap.Steps {
 				if shown[st.N] != st.State && st.State != "queued" && st.State != "downloading" {
 					shown[st.N] = st.State
-					line := fmt.Sprintf("%3d %-10s %s", st.N, st.State, st.Title)
+					label := st.State
+					if label == "skipped" {
+						label = "failed" // couldn't be downloaded (the note says why)
+					}
+					line := fmt.Sprintf("%3d %-10s %s", st.N, label, st.Title)
 					if st.Note != "" {
 						line += "  (" + st.Note + ")"
 					}

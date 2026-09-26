@@ -303,7 +303,7 @@ func (a *App) runImport(j *Job, link string) {
 		step := j.Steps[i]
 		switch {
 		case row.SC.Unavailable:
-			e.Status, e.Note = "missing", "Unavailable on SoundCloud"
+			e.Status, e.Note = "unavailable", "Removed or made private on SoundCloud"
 		case row.Status == Have && !exists(row.Match.Path):
 			// The scan remembered a file that has since been moved or deleted.
 			e.Status = "missing"
@@ -322,7 +322,8 @@ func (a *App) runImport(j *Job, link string) {
 			e.Status = "missing"
 		}
 		j.set(func() {
-			step.State = map[string]string{"have": "have", "maybe": "maybe"}[e.Status]
+			step.State = map[string]string{"have": "have", "maybe": "maybe", "unavailable": "skipped"}[e.Status]
+			step.Note = e.Note
 			if step.State == "" {
 				step.State = "queued"
 			}
@@ -388,11 +389,15 @@ func (a *App) runImport(j *Job, link string) {
 	fresh := make(chan struct{}, 64)
 	for i, e := range scp.Entries {
 		step := j.Steps[i]
-		if e.Status != "missing" || e.SC.Unavailable {
+		if e.Status != "missing" {
 			continue
 		}
 		if !rm.canDownload(i) {
-			j.set(func() { step.State, step.Note = "skipped", noDownloadNote(e.SC) })
+			// Nothing to download: the same status as a download that turns
+			// out to be impossible (e.g. copy-protected), below.
+			note := noDownloadNote(e.SC)
+			e.Status, e.Note = "unavailable", note
+			j.set(func() { step.State, step.Note = "skipped", note })
 			continue
 		}
 		wg.Add(1)
@@ -423,9 +428,16 @@ func (a *App) runImport(j *Job, link string) {
 				}
 			}
 			if err != nil {
-				j.set(func() { step.State, step.Note = "failed", err.Error() })
+				// Retrying won't help (copy-protected, Go+ only, gone): that's
+				// "no download", like tracks that offer none. Otherwise it's a
+				// failure the next sync tries again.
+				state, status := "failed", "failed"
+				if !soundcloud.Retryable(err) {
+					state, status = "skipped", "unavailable"
+				}
+				j.set(func() { step.State, step.Note = state, err.Error() })
 				mu.Lock()
-				e.Status, e.Note = "failed", err.Error()
+				e.Status, e.Note = status, err.Error()
 				mu.Unlock()
 				return
 			}
