@@ -44,6 +44,12 @@ type SCPlaylist struct {
 	Pending    bool       `json:"pending,omitempty"`    // waiting for rekordbox to close
 	Entries    []*SCEntry `json:"entries"`
 	ImportedAt time.Time  `json:"importedAt"`
+	// ToRemove: library tracks that were in the playlist because of
+	// SoundCloud/YouTube but have been taken off it there. They leave the
+	// library playlist at the next write (not the collection, not the disk).
+	ToRemove []string `json:"toRemove,omitempty"`
+	// Removed is how many left the playlist at the last sync.
+	Removed int `json:"removed,omitempty"`
 }
 
 // SCEntry is one SoundCloud track and where it stands in the library.
@@ -118,6 +124,7 @@ type Job struct {
 	Started    time.Time  `json:"started"`
 	PlaylistID string     `json:"playlistId,omitempty"`
 	Source     string     `json:"source,omitempty"`
+	Removed    int        `json:"removed,omitempty"` // songs taken off the playlist (gone from SoundCloud/YouTube)
 }
 
 type JobStep struct {
@@ -142,13 +149,14 @@ type JobView struct {
 	Started    time.Time  `json:"started"`
 	PlaylistID string     `json:"playlistId,omitempty"`
 	Source     string     `json:"source,omitempty"`
+	Removed    int        `json:"removed,omitempty"`
 }
 
 // Snapshot is a copy safe to serialize while the job runs.
 func (j *Job) Snapshot() JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	c := JobView{ID: j.ID, Title: j.Title, URL: j.URL, Status: j.Status, Message: j.Message, Started: j.Started, PlaylistID: j.PlaylistID, Source: j.Source}
+	c := JobView{ID: j.ID, Title: j.Title, URL: j.URL, Status: j.Status, Message: j.Message, Started: j.Started, PlaylistID: j.PlaylistID, Source: j.Source, Removed: j.Removed}
 	for _, s := range j.Steps {
 		cp := *s
 		c.Steps = append(c.Steps, &cp)
@@ -348,6 +356,17 @@ func (a *App) runImport(j *Job, link string) {
 	a.State.mu.Lock()
 	if old := a.scByURL(link); old != nil {
 		scp.PlaylistID = old.PlaylistID // keep the link to the library playlist while syncing
+		// Songs taken off the playlist on SoundCloud/YouTube since last time.
+		still := map[int64]bool{}
+		for _, e := range scp.Entries {
+			still[e.SC.ID] = true
+		}
+		scp.ToRemove = old.ToRemove
+		for _, e := range old.Entries {
+			if e.SC != nil && !still[e.SC.ID] && e.TrackID != "" {
+				scp.ToRemove = append(scp.ToRemove, e.TrackID)
+			}
+		}
 		*old = *scp
 		scp = old
 	} else {
@@ -501,7 +520,11 @@ func (a *App) runImport(j *Job, link string) {
 		})
 		return
 	}
-	j.set(func() { j.Status = "done" })
+	removed := 0
+	if sp := a.scByURLLocked(link); sp != nil {
+		removed = sp.Removed
+	}
+	j.set(func() { j.Status, j.Removed = "done", removed })
 }
 
 // scChange is the library change for a synced playlist: every entry that's
@@ -612,8 +635,53 @@ func (a *App) afterApply(ch *Change, res *Applied) {
 	}
 	a.State.save()
 	a.State.mu.Unlock()
+	if ch.Ordered {
+		a.removeGone(ch.SCURL)
+	}
 	a.rebuild()
 	go a.Scan(nil) // pick up new files' tags and quality
+}
+
+// removeGone takes songs that left the SoundCloud/YouTube playlist out of
+// the library playlist (unless the user turned that off). Songs still in the
+// playlist, or added to it by hand, stay.
+func (a *App) removeGone(link string) {
+	a.State.mu.Lock()
+	sp := a.scByURL(link)
+	if sp == nil || len(sp.ToRemove) == 0 || sp.PlaylistID == "" {
+		if sp != nil {
+			sp.Removed = 0
+		}
+		a.State.mu.Unlock()
+		return
+	}
+	keep := map[string]bool{}
+	for _, e := range sp.Entries {
+		keep[e.TrackID] = true
+	}
+	var ids []string
+	for _, id := range sp.ToRemove {
+		if !keep[id] {
+			ids = append(ids, id)
+		}
+	}
+	pid := sp.PlaylistID
+	a.State.mu.Unlock()
+	if a.Cfg.KeepRemovedTracks || len(ids) == 0 {
+		a.State.mu.Lock()
+		sp.ToRemove, sp.Removed = nil, 0
+		a.State.save()
+		a.State.mu.Unlock()
+		return
+	}
+	if _, err := a.Src.EditPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: ids}); err != nil {
+		log.Printf("removing songs no longer in %s: %v", link, err)
+		return // kept in ToRemove: tried again at the next write
+	}
+	a.State.mu.Lock()
+	sp.ToRemove, sp.Removed = nil, len(ids)
+	a.State.save()
+	a.State.mu.Unlock()
 }
 
 // PendingChanges lists changes waiting for rekordbox to close.

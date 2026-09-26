@@ -83,7 +83,9 @@ open it on SoundCloud, or copy its name or link.
 Synced playlists appear in your rekordbox library inside a **SoundCloud** or **YouTube** folder,
 marked **⟳ SC** or **⟳ YT** in SuperSync's sidebar. Open one and click **Sync** to pick up songs
 added since last time, or turn on **Settings → Automatic sync** (every hour, 6 hours or day)
-while SuperSync is open.
+while SuperSync is open. Songs taken off the SoundCloud playlist are taken off the rekordbox playlist
+too (they stay in your collection); songs you added to the playlist yourself in rekordbox stay.
+You can turn that off in Settings.
 
 What gets downloaded:
 - The artist's own file when they've switched on SoundCloud's download button. This is often a

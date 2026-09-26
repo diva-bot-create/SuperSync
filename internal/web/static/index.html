@@ -610,6 +610,8 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
           <button id="syncAll">Sync all now</button>
         </div>
         <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoApply" style="accent-color:var(--accent)"> Add waiting changes to rekordbox as soon as it's closed</label>
+        <label class="row" style="margin-top:6px;gap:8px;cursor:pointer"><input type="checkbox" id="mirrorRemovals" style="accent-color:var(--accent)"> When a song is taken off the SoundCloud or YouTube playlist, take it off the rekordbox playlist too</label>
+        <div class="muted" style="font-size:12.5px;margin:2px 0 0 26px">It stays in your collection, and songs you added to the playlist yourself in rekordbox are left alone.</div>
         <div class="muted" id="syncState" style="margin-top:8px;font-size:12.5px"></div>
         <div class="muted" style="margin-top:6px;font-size:12.5px">SuperSync never quits rekordbox on its own. While rekordbox is open, changes wait until you close it, or until you click <b>Restart rekordbox &amp; apply</b>.</div>
       </div>
@@ -1077,6 +1079,7 @@ async function refresh() {
   undo.title = S.lastCleanup || "";
   $("#autoSync").value = String(S.autoSyncHours || 0);
   $("#autoApply").checked = !!S.autoApply;
+  $("#mirrorRemovals").checked = S.mirrorRemovals !== false;
   paintUpdate();
   paintApp();
   $("#cleanupAction").value = S.cleanupAction || "trash";
@@ -1372,7 +1375,8 @@ function followSync(url, job, open) {
     if (["done", "error", "waiting"].includes(job.status)) {
       syncing.delete(url); setBusy(-1);
       const got = (job.steps || []).filter(x => x.state === "downloaded").length;
-      if (job.status === "done") toast(got ? `Downloaded and added ${got} track${got === 1 ? "" : "s"} to “${job.title}”.` : `“${job.title}” is up to date.`, "ok");
+      const gone = job.removed ? ` ${job.removed} song${job.removed === 1 ? " was" : "s were"} taken off it (no longer in the ${job.source === "youtube" ? "YouTube" : "SoundCloud"} playlist).` : "";
+      if (job.status === "done") toast((got ? `Downloaded and added ${got} track${got === 1 ? "" : "s"} to “${job.title}”.` : `“${job.title}” is up to date.`) + gone, "ok");
       else if (job.status === "waiting") toast(job.message);
       else toast(job.message || "Sync failed", "err");
       showSyncBar(null);
@@ -3119,6 +3123,7 @@ $("#diagBtn").onclick = async () => {
 };
 $("#autoSync").onchange = e => saveSetting({ autoSyncHours: Number(e.target.value) });
 $("#autoApply").onchange = e => saveSetting({ autoApply: e.target.checked });
+$("#mirrorRemovals").onchange = e => saveSetting({ mirrorRemovals: e.target.checked });
 $("#syncAll").onclick = async () => { try { await api("sync/all", {}); toast("Syncing all playlists…"); setTimeout(refresh, 800); } catch (e) { toast(e.message, "err"); } };
 $("#pickMusic").onclick = async () => {
   const dir = await pick("Choose your download folder", S.musicDir);

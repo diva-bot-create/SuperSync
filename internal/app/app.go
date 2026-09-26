@@ -47,6 +47,9 @@ type Config struct {
 	// cleaned up: "trash" (the default: Trash / Recycle Bin), "delete"
 	// (permanently) or "folder" (kept in _SuperSync Duplicates).
 	CleanupAction string `json:"cleanupAction,omitempty"`
+	// KeepRemovedTracks keeps songs in a synced library playlist after they're
+	// taken off the SoundCloud/YouTube playlist (by default they leave it).
+	KeepRemovedTracks bool `json:"keepRemovedTracks,omitempty"`
 	// NotDuplicates: pairs of files the user said aren't duplicates.
 	NotDuplicates []string `json:"notDuplicates,omitempty"`
 	// Decisions records the user's answers for uncertain matches:

@@ -44,6 +44,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			KeepRunning *bool   `json:"keepRunning"`
 			OpenAtLogin *bool   `json:"openAtLogin"`
 			Cleanup     *string `json:"cleanupAction"`
+			MirrorRemov *bool   `json:"mirrorRemovals"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -77,6 +78,10 @@ func (s *server) routes(mux *http.ServeMux) {
 		if err == nil && req.KeepRunning != nil {
 			a.Cfg.QuitOnClose = !*req.KeepRunning
 			window.SetKeepRunning(*req.KeepRunning)
+			err = a.Cfg.Save()
+		}
+		if err == nil && req.MirrorRemov != nil {
+			a.Cfg.KeepRemovedTracks = !*req.MirrorRemov
 			err = a.Cfg.Save()
 		}
 		if err == nil && req.Cleanup != nil {
@@ -1036,6 +1041,7 @@ type state struct {
 	App          bool            `json:"app"`                    // in SuperSync's own window
 	DownloadsDir string          `json:"downloadsDir,omitempty"` // the user's Downloads folder, where new files usually land
 	Cleanup      string          `json:"cleanupAction"`          // trash, delete or folder
+	MirrorRemov  bool            `json:"mirrorRemovals"`         // songs taken off a synced playlist leave it here too
 	KeepRunning  bool            `json:"keepRunning"`
 	OpenAtLogin  bool            `json:"openAtLogin"`
 	CanAutorun   bool            `json:"canAutorun"`
@@ -1059,6 +1065,7 @@ func (s *server) state() state {
 	st.LastSync = a.State.LastSyncTime()
 	st.Update, st.AutoUpdate, st.App = s.upd.Status(), !a.Cfg.NoAutoUpdate, s.inWindow
 	st.KeepRunning, st.OpenAtLogin, st.CanAutorun = !a.Cfg.QuitOnClose, a.Cfg.OpenAtLogin, autostart.Supported()
+	st.MirrorRemov = !a.Cfg.KeepRemovedTracks
 	if st.Cleanup = a.Cfg.CleanupAction; st.Cleanup == "" {
 		st.Cleanup = "trash"
 	}
