@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"supersync/internal/app"
+	"supersync/internal/rbdb"
 )
 
 //go:embed static
@@ -278,7 +280,11 @@ func reply(w http.ResponseWriter, v any, err error) {
 	w.Header().Set("Cache-Control", "no-store")
 	if err != nil {
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		body := map[string]string{"error": err.Error()}
+		if errors.Is(err, rbdb.ErrRunning) {
+			body["code"] = "rekordbox_running" // the page asks before quitting it
+		}
+		json.NewEncoder(w).Encode(body)
 		return
 	}
 	json.NewEncoder(w).Encode(v)

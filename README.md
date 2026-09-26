@@ -97,7 +97,9 @@ while it's closed. Changes made while it's open wait in the sidebar. You can:
 
 - close rekordbox and click **Apply now**;
 - turn on **Add waiting changes as soon as it's closed** in Settings; or
-- click **Restart rekordbox & apply** (or **Restart rekordbox & clean up**). SuperSync asks
+- click **Restart rekordbox & apply…**, or clean up duplicates while it's open. SuperSync first
+  shows a **Quit rekordbox?** confirmation, and nothing is quit unless you click
+  **Quit rekordbox & continue**. It then asks
   rekordbox to quit the normal way, as ⌘Q would. It never force-quits, because that could
   corrupt the library mid-write. It then writes the changes and opens rekordbox again, which
   reads the new library as it starts. If rekordbox shows a dialog instead of quitting, nothing is

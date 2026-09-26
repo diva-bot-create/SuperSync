@@ -578,6 +578,20 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   <div class="dlg-f"><button id="confNo">Cancel</button><button class="primary" id="confYes">Move</button></div>
 </dialog>
 
+<dialog id="quitDlg">
+  <div class="dlg-h">Quit rekordbox?</div>
+  <div class="dlg-b">
+    <p style="margin-top:0">rekordbox is open, and SuperSync can only change the library while it's closed. To <b id="quitWhat"></b>, SuperSync will:</p>
+    <ol class="steps">
+      <li>ask rekordbox to quit, the same as choosing Quit from its menu (it's never force-quit);</li>
+      <li>back up the library and make the change;</li>
+      <li>open rekordbox again.</li>
+    </ol>
+    <div class="warn">If you're playing, cancel: the decks stop when rekordbox quits. If rekordbox asks you something as it closes, answer it there.</div>
+  </div>
+  <div class="dlg-f"><button id="quitNo">Keep rekordbox open</button><button class="primary" id="quitYes">Quit rekordbox &amp; continue</button></div>
+</dialog>
+
 <dialog id="importDlg">
   <div class="dlg-h" id="impTitle">Add a SoundCloud playlist</div>
   <div class="dlg-b" id="impBody"></div>
@@ -838,8 +852,35 @@ async function api(path, body) {
   const ct = r.headers.get("Content-Type") || "";
   if (!ct.includes("json")) { if (!r.ok) throw new Error(await r.text()); return r; }
   const data = await r.json();
-  if (!r.ok) throw new Error(data.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(data.error || r.statusText), { code: data.code });
   return data;
+}
+
+// Ask before SuperSync quits rekordbox. Resolves true only on an explicit yes.
+function askQuitRekordbox(what) {
+  const d = $("#quitDlg");
+  $("#quitWhat").textContent = what;
+  openDlg(d);
+  return new Promise(res => {
+    const finish = ok => { d.removeEventListener("cancel", onCancel); closeDlg(d); res(ok); };
+    const onCancel = e => { e.preventDefault(); finish(false); };
+    d.addEventListener("cancel", onCancel);
+    $("#quitNo").onclick = () => finish(false);
+    $("#quitYes").onclick = () => finish(true);
+    $("#quitNo").focus();
+  });
+}
+
+// Call a library-changing endpoint. If rekordbox turns out to be open, ask
+// before letting SuperSync quit it; returns null if the user says no.
+async function withRekordbox(what, call) {
+  try { return await call(false); }
+  catch (e) {
+    if (e.code !== "rekordbox_running") throw e;
+    if (!await askQuitRekordbox(what)) return null;
+    toast("Asking rekordbox to quit…");
+    return await call(true);
+  }
 }
 
 // ---------- tabs ----------
@@ -1700,12 +1741,10 @@ function finishJob(j) {
   }
 }
 async function applyPending() {
-  const running = S.source?.kind === "rekordbox" && S.source.running;
-  if (running && !confirm("rekordbox is open. Let SuperSync ask it to quit, add the changes, and open it again? (Don't do this mid-set.)")) return;
   setBusy(+1);
-  if (running) toast("Asking rekordbox to quit…");
   try {
-    const r = await api("pending/apply", { restart: running });
+    const r = await withRekordbox("add the waiting changes", restart => api("pending/apply", { restart }));
+    if (!r) return;
     toast(`Added ${r.applied} playlist${r.applied === 1 ? "" : "s"} to rekordbox.`, "ok");
     if ($("#importDlg").open && importJob) { importJob.status = "done"; closeDlg($("#importDlg")); }
     await loadLibrary();
@@ -1717,7 +1756,7 @@ function renderPending() {
   const box = $("#pendBox"), p = S.pending || [];
   const show = p.length > 0;
   if (show) box.innerHTML = `<b>${p.length} change${p.length > 1 ? "s" : ""} waiting</b> for rekordbox to close: ${p.map(c => esc(c.label)).join(", ")}.
-    <div class="row"><button class="small" id="pendApply">${S.source?.running ? "Restart rekordbox & apply" : "Apply now"}</button><button class="link" id="pendDiscard">Discard</button></div>`;
+    <div class="row"><button class="small" id="pendApply">${S.source?.running ? "Restart rekordbox & apply…" : "Apply now"}</button><button class="link" id="pendDiscard">Discard</button></div>`;
   if (show === box.classList.contains("hidden")) {
     box.classList.toggle("hidden", !show);
     if (show) anim(box, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }]);
@@ -1893,16 +1932,17 @@ function confirmCleanup(gs) {
       <li>The extras leave your library, and their files move to <span class="mono">_SuperSync Duplicates</span>.</li>
       <li>Your library is backed up first; <b>Undo clean-up</b> puts everything back.</li></ul>
     <ul class="mono" style="padding-left:18px;font-size:12px">${files.map(f => `<li>${esc(f.rel)}</li>`).join("")}</ul>
-    ${running ? `<div class="warn">rekordbox is open. SuperSync can ask it to quit, clean up, then open it again. Don't do this mid-set.</div>` : ""}`;
-  $("#confYes").textContent = running ? "Restart rekordbox & clean up" : "Clean up";
+    ${running ? `<div class="warn">rekordbox is open. You'll be asked before SuperSync quits it.</div>` : ""}`;
+  $("#confYes").textContent = "Clean up";
   openDlg(d);
   $("#confNo").onclick = () => closeDlg(d);
   $("#confYes").onclick = async () => {
     await closeDlg(d);
     setBusy(+1);
-    if (running) toast("Asking rekordbox to quit…");
     try {
-      const r = await api("dupes/cleanup", { groups: gs.map(g => ({ keep: keep[g.id], extras: extras(g).map(c => c.path) })), restart: running });
+      const body = { groups: gs.map(g => ({ keep: keep[g.id], extras: extras(g).map(c => c.path) })) };
+      const r = await withRekordbox(`clean up ${gs.length} duplicate${gs.length > 1 ? "s" : ""}`, restart => api("dupes/cleanup", { ...body, restart }));
+      if (!r) return;
       const els = gs.map(g => $(`[data-k="g${g.id}"]`)).filter(Boolean);
       await Promise.all(els.map(collapse));
       const cues = r.groups.filter(x => x.cuesCopied).length;
@@ -1918,11 +1958,9 @@ function confirmCleanup(gs) {
 }
 $("#undoBtn").onclick = async () => {
   setBusy(+1);
-  const running = S.source?.kind === "rekordbox" && S.source.running;
   try {
     if (S.lastCleanup) {
-      if (running && !confirm("rekordbox is open. Let SuperSync quit it, undo the clean-up, and open it again?")) return;
-      await api("dupes/undo-cleanup", { restart: running });
+      if (!await withRekordbox("undo the clean-up", restart => api("dupes/undo-cleanup", { restart }))) return;
       toast("Clean-up undone: library and files are back.", "ok");
     } else {
       const r = await api("undo", {});
