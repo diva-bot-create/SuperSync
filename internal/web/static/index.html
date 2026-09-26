@@ -1074,7 +1074,12 @@ async function refresh() {
     libData.source.running = src.running;
     if (wasRunning !== src.running) renderSource();
     // rekordbox changed its library (or we did): reload the tree and the open list.
-    if (src.loadedAt !== libLoaded && src.loadedAt) { libLoaded = src.loadedAt; loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); }
+    if (src.loadedAt !== libLoaded && src.loadedAt) {
+      libLoaded = src.loadedAt; loadLibrary(); if (cur.id) openList(cur.id, { quiet: true });
+      // Duplicates and upgrades depend on the library too (cues, playlists).
+      dupesLoaded = upsLoaded = false;
+      if (curTab === "dupes" || curTab === "upgrades") loaders[curTab]();
+    }
   }
   const bar = $("#scanBar");
   const wasScanning = scanBusy;
@@ -2706,7 +2711,16 @@ loaders.dupes = async () => {
     groups.forEach(g => keep[g.id] = g.copies.some(c => c.path === k[g.id]) ? k[g.id] : g.copies[0].path);
     showErr($("#dupeErr"), null);
     renderDupes();
-  } catch (e) { showErr($("#dupeErr"), e); box.replaceChildren(); }
+  } catch (e) {
+    // Reading the files (e.g. after rekordbox closed and saved its library):
+    // try again when that's done rather than showing nothing.
+    if (/still scanning/i.test(e.message)) {
+      box.innerHTML = `<div class="empty">Reading your files… duplicates show up when that's done.</div>`;
+      setTimeout(() => { if (curTab === "dupes" && !dupesLoaded) loaders.dupes(); }, 2000);
+      return;
+    }
+    showErr($("#dupeErr"), e); box.replaceChildren();
+  }
 };
 function extras(g) { return g.copies.filter(c => c.path !== keep[g.id]); }
 function warnHtml(g) {
@@ -2732,7 +2746,10 @@ function renderDupesChrome() {
   const n = auto.reduce((a, g) => a + extras(g).length, 0);
   const bytes = auto.reduce((a, g) => a + extras(g).reduce((b, c) => b + c.size, 0), 0);
   $("#moveAll").disabled = !n;
-  $("#moveAll").textContent = n ? `Clean up all (${auto.length} track${auto.length === 1 ? "" : "s"}, ${fmtSize(bytes)} freed)` : "Clean up all";
+  $("#moveAll").textContent = n ? `Clean up all (${auto.length} track${auto.length === 1 ? "" : "s"}, ${fmtSize(bytes)} freed)` : groups.length ? "Nothing to clean up automatically" : "Clean up all";
+  $("#moveAll").title = n ? "" : groups.length
+    ? "Every duplicate here has copies of different lengths (maybe an edit and an extended mix), which Clean up all leaves alone. Use Clean up on each one that really is a duplicate."
+    : "No duplicates found.";
   const cueGroups = groups.filter(needsCues);
   const cues = $("#cuesAll");
   if (!!cueGroups.length === cues.classList.contains("hidden")) {
@@ -2906,7 +2923,11 @@ loaders.upgrades = async () => {
     box.innerHTML = skeleton(4, "item uitem", i => `<span><span class="skel" style="width:90px;height:15px"></span></span><span><span class="skel" style="width:${40 + i * 9}%"></span><span class="skel" style="width:${60 - i * 7}%"></span></span>`);
     rise(box.children, { gap: 50, dist: 8 });
   }
-  try { ups = await api("upgrades"); upsLoaded = true; showErr($("#upErr"), null); renderUps(); } catch (e) { showErr($("#upErr"), e); }
+  try { ups = await api("upgrades"); upsLoaded = true; showErr($("#upErr"), null); renderUps(); }
+  catch (e) {
+    if (/still scanning/i.test(e.message)) { setTimeout(() => { if (curTab === "upgrades" && !upsLoaded) loaders.upgrades(); }, 2000); return; }
+    showErr($("#upErr"), e);
+  }
 };
 // Only tracks you can do something about: a better copy is ready to swap in,
 // or the uploader linked a download or a store.
