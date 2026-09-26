@@ -1268,6 +1268,7 @@ function renderListHead(animate) {
   $("#findMoved")?.addEventListener("click", findMoved);
   $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
     + [["need", "none", "NEED", "Not in your library yet: the next sync downloads them"],
+       ["waiting", "hq", "WAITING", "Downloaded, joining your rekordbox playlist when rekordbox closes"],
        ["maybe", "normal", "MAYBE", "Might already be in your library: tell SuperSync whether they're the same"],
        ["failed", "low", "FAILED", "Couldn't be downloaded (hover a track to see why)"]]
       .map(([k, cls, label, tip]) => { const n = d.rows.filter(r => rowState(r) === k).length;
@@ -1290,7 +1291,7 @@ function renderSyncBtn(animate) {
   const b = $("#syncBtn"), sc = cur.data?.sc;
   if (!sc) { b.classList.add("hidden"); return; }
   const job = syncing.get(sc.url);
-  const need = cur.data.rows.filter(r => !r.id && r.status !== "unavailable" && r.status !== "maybe").length;
+  const need = cur.data.rows.filter(r => rowState(r) === "need").length;
   let html;
   if (job) {
     const steps = job.steps || [], total = steps.length;
@@ -1370,7 +1371,7 @@ function applyFilter(animate, keepScroll) {
   const q = $("#search").value.trim().toLowerCase();
   const words = q ? q.split(/\s+/) : [];
   cur.view = cur.data.rows.filter(r => {
-    if (tierFilter && (["need", "maybe", "failed"].includes(tierFilter) ? rowState(r) !== tierFilter : r.tier !== tierFilter)) return false;
+    if (tierFilter && (["need", "waiting", "maybe", "failed"].includes(tierFilter) ? rowState(r) !== tierFilter : r.tier !== tierFilter)) return false;
     if (!words.length) return true;
     const hay = `${r.title} ${r.artist} ${r.album || ""} ${r.genre || ""} ${r.key || ""} ${r.sc?.title || ""}`.toLowerCase();
     return words.every(w => hay.includes(w));
@@ -1412,7 +1413,8 @@ function renderRows(animate) {
 function paintRow(el, r, i) {
   el.classList.toggle("sel", i === selIdx);
   el.classList.toggle("playing", !!playId(r) && playId(r) === nowPlaying?.id);
-  el.classList.toggle("ghost", !r.id || r.missing);
+  // !!: toggle(name, undefined) flips the class instead of clearing it.
+  el.classList.toggle("ghost", !!((!r.id && !r.file) || r.missing));
 }
 function repaintRows() { pool.forEach((el, i) => paintRow(el, cur.view[i], i)); }
 // Refreshes the quality and get-it cells of rows not in the library yet
@@ -1435,6 +1437,9 @@ function tierBadge(r) {
     if (st?.state === "downloading") return `<span class="tier normal dl" title="Downloading"><i style="width:${st.progress > 0 ? Math.round(st.progress * 100) : 30}%"></i>${st.progress > 0 ? Math.round(st.progress * 100) + "%" : "…"}</span>`;
     if (st?.state === "queued") return `<span class="tier none" title="Waiting to download">QUEUED</span>`;
     if (st?.state === "downloaded") return `<span class="tier hq" title="Downloaded; being added to the playlist">ADDING</span>`;
+    if (r.file && !st) return `<span class="tier hq" title="${esc(cur.data?.sc?.pending
+      ? "Downloaded. It joins your rekordbox playlist when rekordbox closes (see “Waiting for rekordbox” in the sidebar). It plays from the file meanwhile."
+      : "Downloaded but not in your library yet. Click Sync to add it.")}">WAITING</span>`;
     // Couldn't be downloaded, whether that was clear upfront (Go+ only, no
     // download offered) or only on trying (copy-protected, a dropped
     // connection): FAILED, with the reason.
@@ -1511,6 +1516,7 @@ document.addEventListener("click", e => {
 function playId(r) {
   if (!r) return null;
   if (r.id) return r.missing ? null : r.id;
+  if (r.file && r.sc) return "dl:" + r.sc.id; // downloaded, waiting for rekordbox
   if (r._pid === undefined) r._pid = r.sc && !r.sc.unavailable && !r.sc.goPlus && !r.sc.protected && r.status !== "unavailable" && cur.data?.sc?.source !== "youtube" ? "sc:" + r.sc.id : null;
   return r._pid;
 }
@@ -1518,6 +1524,7 @@ function playId(r) {
 // "need" (a sync will get it), "maybe" (possibly already there) or "failed".
 function rowState(r) {
   if (r.id) return "";
+  if (r.file && !stepFor(r)) return "waiting";
   const st = stepFor(r)?.state;
   if (st === "failed" || st === "skipped" || r.status === "failed" || r.status === "unavailable") return "failed";
   if (r.status === "maybe" && !st) return "maybe";

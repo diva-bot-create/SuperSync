@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -207,6 +208,16 @@ func (s *server) routes(mux *http.ServeMux) {
 	})
 
 	mux.HandleFunc("GET /api/audio/{id}", func(w http.ResponseWriter, r *http.Request) {
+		// "dl:<id>" plays a downloaded track that's waiting to join the library.
+		if id, ok := strings.CutPrefix(r.PathValue("id"), "dl:"); ok {
+			f := s.downloadedFile(id)
+			if f == "" {
+				http.Error(w, "that download isn't there any more", http.StatusNotFound)
+				return
+			}
+			serveAudio(w, r, f)
+			return
+		}
 		// "sc:<id>" plays a SoundCloud track that isn't in the library yet.
 		if id, ok := strings.CutPrefix(r.PathValue("id"), "sc:"); ok {
 			path, err := s.soundcloudStream(id)
@@ -234,7 +245,11 @@ func (s *server) routes(mux *http.ServeMux) {
 		var t *rbdb.Track
 		var path string
 		var err error
-		if id, ok := strings.CutPrefix(r.PathValue("id"), "sc:"); ok {
+		if id, ok := strings.CutPrefix(r.PathValue("id"), "dl:"); ok {
+			if path = s.downloadedFile(id); path == "" {
+				err = errors.New("that download isn't there any more")
+			}
+		} else if id, ok := strings.CutPrefix(r.PathValue("id"), "sc:"); ok {
 			path, err = s.soundcloudStream(id)
 		} else if t = s.track(r.PathValue("id")); t == nil {
 			err = errors.New("no such track")
@@ -627,6 +642,7 @@ type Row struct {
 	Status string            `json:"status,omitempty"` // have, downloaded, maybe, missing, failed
 	Note   string            `json:"note,omitempty"`
 	Maybe  string            `json:"maybe,omitempty"` // a file that might be this track
+	File   string            `json:"file,omitempty"`  // downloaded, waiting to join the library
 }
 
 func (s *server) row(t *rbdb.Track) *Row {
@@ -733,6 +749,21 @@ func (s *server) trackList(pid string) *trackList {
 	return out
 }
 
+// downloadedFile is the file downloaded for a synced playlist's SoundCloud
+// track (by its SoundCloud id), if it's on disk.
+func (s *server) downloadedFile(scID string) string {
+	for _, p := range s.app.SCPlaylists() {
+		for _, e := range p.Entries {
+			if e.SC != nil && strconv.FormatInt(e.SC.ID, 10) == scID && e.File != "" {
+				if _, err := os.Stat(e.File); err == nil {
+					return e.File
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func (s *server) scRows(sp *app.SCPlaylist, add func(*Row)) {
 	for _, e := range sp.Entries {
 		var r *Row
@@ -740,6 +771,13 @@ func (s *server) scRows(sp *app.SCPlaylist, add func(*Row)) {
 			r = s.row(t)
 		} else {
 			r = &Row{Title: e.SC.Title, Artist: e.SC.Uploader, Length: int(e.SC.DurationMS / 1000)}
+			// Downloaded (or already on disk) but not in the library yet,
+			// usually because rekordbox is open: it plays from the file.
+			if e.File != "" {
+				if _, err := os.Stat(e.File); err == nil {
+					r.File, r.Path = e.File, e.File
+				}
+			}
 		}
 		r.SC, r.Status, r.Note, r.Maybe = e.SC, e.Status, e.Note, e.Maybe
 		if r.ID != "" && r.Status != "downloaded" {
