@@ -114,7 +114,7 @@ music folder or Downloads), SuperSync notices within a few minutes and the label
 Click it and choose **Swap in**. The better copy then takes the old one's place in every playlist
 and its history, your cues move across lined up to the new file, and the old file goes to
 the Trash (or wherever **Settings → Clean-up** says). **Undo** puts the library back. If SuperSync hasn't spotted the file, choose
-**I have a better copy…** and pick it.
+**I have a better copy** and either choose the file or pick it from your library.
 
 **Songs you already have.** When a playlist syncs, songs already in your library are added as they
 are: nothing is downloaded, and your cues, beatgrid and play history stay. If SuperSync isn't sure

@@ -2186,6 +2186,19 @@ function searchLibrary(title, intro, query, skipID, onPick) {
   };
 }
 
+// A better copy that's already in the library: it takes this track's place
+// (the same as replacing it with a library track).
+function betterFromLibrary(r) {
+  if (!r?.id) return;
+  searchLibrary("A better copy in my library",
+    `Pick the better copy of <b>${esc(r.title)}</b>. It takes this track's place in your playlists and history, gets its cues if it has none, and this file is then ${esc(cleanupWhere(true))}.`,
+    r.title, r.id, keepT => {
+      const g = { id: "manual", copies: [{ path: keepT.path, rel: keepT.path.split(/[\\/]/).pop() }, { path: r.path, rel: r.path.split(/[\\/]/).pop() }], lengthsDiffer: false };
+      keep[g.id] = keepT.path;
+      confirmCleanup([g]);
+    });
+}
+
 // A duplicate SuperSync didn't spot: fold this track into another library
 // track (the one kept), exactly as a duplicate clean-up does.
 function replaceWithLibraryTrack(r) {
@@ -2212,7 +2225,8 @@ function upgradeMenu(r) {
     ...src.buy.map(x => ({ icon: "$", label: "Buy from " + x.label, run: () => openLink(x.url) })),
     !src.dl.length && !src.buy.length && { icon: "", label: r.sc ? "No download link" : "No links (not from a synced playlist)", disabled: true },
     "-",
-    { icon: "📂", label: "I have a better copy…", run: () => chooseUpgrade(r) },
+    { icon: "📂", label: "I have a better copy: choose the file…", run: () => chooseUpgrade(r) },
+    { icon: "♪", label: "I have a better copy: it's in my library…", run: () => betterFromLibrary(r) },
     { icon: "⟳", label: "Look for downloaded copies now", run: lookForUpgrades },
   ];
 }
@@ -2403,7 +2417,8 @@ function trackMenu(r, i) {
     { icon: "ⓘ", label: "Show details", run: () => select(i, true) },
     "-",
     r.id && (r.tier === "low" || r.tier === "normal") && r.better && { icon: "↑", label: `Swap in the ${r.better.label} copy`, run: () => swapUpgrade(r, r.better.path) },
-    r.id && (r.tier === "low" || r.tier === "normal") && { icon: "📂", label: "I have a better copy…", run: () => chooseUpgrade(r) },
+    r.id && (r.tier === "low" || r.tier === "normal") && { icon: "📂", label: "I have a better copy: choose the file…", run: () => chooseUpgrade(r) },
+    r.id && (r.tier === "low" || r.tier === "normal") && { icon: "♪", label: "I have a better copy: it's in my library…", run: () => betterFromLibrary(r) },
     r.id && { icon: "＋", label: "Add to playlist…", run: () => addToPlaylist([r.id]) },
     r.id && !r.stream && { icon: "⇄", label: "Replace with a track from my library…", run: () => replaceWithLibraryTrack(r) },
     r.id && cur.id && cur.id !== "all" && !cur.id.startsWith("sc:") && { icon: "−", label: "Remove from this playlist", run: () => removeFromPlaylist(cur.id, [r.id]) },
