@@ -1,0 +1,1811 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f0f10">
+<title>SuperSync</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23ff5500'/><circle cx='16' cy='16' r='5' fill='%23111'/><circle cx='16' cy='16' r='1.6' fill='%23ff5500'/></svg>">
+<style>
+:root {
+  /* SuperSync is dark-only, whatever the system appearance. */
+  --bg: #0f0f10; --panel: #19191a; --panel-2: #222223; --line: #2c2c2e; --text: #eeece9;
+  --muted: #9b9893; --accent: #ff6a1f; --accent-2: #ff9a55; --accent-ink: #140a04; --accent-soft: #2f1d12;
+  --have: #4cc27f; --have-soft: #15271d; --maybe: #e2a94a; --maybe-soft: #2c2414;
+  --need: #ef6b61; --need-soft: #2f1917; --info: #7b9cf0; --info-soft: #1a2238;
+  --hover: rgba(255, 255, 255, .035);
+  --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 10px 30px rgba(0,0,0,.35);
+  --shadow-lift: 0 1px 0 rgba(255,255,255,.04) inset, 0 16px 40px rgba(0,0,0,.5);
+  --glow-1: rgba(255, 106, 31, .13); --glow-2: rgba(110, 140, 255, .08);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ease: cubic-bezier(.22, 1, .36, 1);          /* long, soft deceleration */
+  --spring: cubic-bezier(.34, 1.4, .64, 1);      /* small overshoot */
+  --radius: 14px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+
+/* Slow ambient light behind everything */
+body::before, body::after { content: ""; position: fixed; z-index: -1; width: 70vmax; height: 70vmax; border-radius: 50%; pointer-events: none; }
+body::before { background: radial-gradient(circle, var(--glow-1), transparent 62%); top: -32vmax; right: -22vmax; animation: drift-a 36s ease-in-out infinite alternate; }
+body::after { background: radial-gradient(circle, var(--glow-2), transparent 62%); bottom: -38vmax; left: -26vmax; animation: drift-b 48s ease-in-out infinite alternate; }
+@keyframes drift-a { to { transform: translate(-9vmax, 7vmax) scale(1.12); } }
+@keyframes drift-b { to { transform: translate(10vmax, -6vmax) scale(1.08); } }
+
+a { color: inherit; }
+button, input, select { font: inherit; color: inherit; }
+button {
+  cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 7px 13px;
+  position: relative; overflow: hidden; isolation: isolate; white-space: nowrap;
+  transition: transform .25s var(--ease), background-color .25s, border-color .25s, box-shadow .3s var(--ease), opacity .3s, color .25s;
+}
+button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--muted) 55%, var(--line)); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.3); }
+button:active:not(:disabled) { transform: translateY(0) scale(.965); transition-duration: .08s; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: linear-gradient(135deg, var(--accent-2), var(--accent) 55%); border-color: transparent; color: var(--accent-ink); font-weight: 600; box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent); }
+button.primary:hover:not(:disabled) { border-color: transparent; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 38%, transparent); }
+button.primary::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.35) 50%, transparent 65%); transform: translateX(-120%); transition: transform .8s var(--ease); pointer-events: none; }
+button.primary:hover:not(:disabled)::after { transform: translateX(120%); }
+button.small { padding: 4px 10px; font-size: 12.5px; border-radius: 8px; }
+button.link { border: 0; background: none; padding: 0; color: var(--muted); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--muted) 40%, transparent); text-underline-offset: 2px; font-size: 12.5px; overflow: visible; }
+button.link:hover:not(:disabled) { transform: none; box-shadow: none; color: var(--accent); text-decoration-color: currentColor; }
+.ripple { position: absolute; border-radius: 50%; background: currentColor; pointer-events: none; z-index: -1; transform: scale(0); }
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor; border-radius: 50%; animation: s .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes s { to { transform: rotate(1turn); } }
+
+input[type=text], select { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 0; transition: border-color .25s, box-shadow .35s var(--ease), background-color .25s; }
+input[type=text]:hover, select:hover { border-color: color-mix(in srgb, var(--muted) 45%, var(--line)); }
+input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+header {
+  display: flex; align-items: center; gap: 18px; padding: 12px 24px; position: sticky; top: 0; z-index: 10; flex-wrap: wrap;
+  background: color-mix(in srgb, var(--panel) 72%, transparent); backdrop-filter: saturate(1.6) blur(18px); -webkit-backdrop-filter: saturate(1.6) blur(18px);
+  border-bottom: 1px solid transparent; transition: border-color .4s, box-shadow .4s;
+  view-transition-name: header;
+}
+header.scrolled { border-bottom-color: var(--line); box-shadow: 0 8px 28px rgba(0,0,0,.35); }
+header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; opacity: 0; transition: opacity .5s;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent); background-size: 45% 100%; background-repeat: no-repeat;
+  animation: sweep 1.6s ease-in-out infinite; }
+body.busy header::after { opacity: 1; }
+@keyframes sweep { from { background-position: -60% 0; } to { background-position: 160% 0; } }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; letter-spacing: -.02em; }
+.brand svg { width: 26px; height: 26px; filter: drop-shadow(0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent)); }
+nav { display: flex; gap: 2px; position: relative; padding: 3px; border-radius: 12px; background: color-mix(in srgb, var(--panel-2) 70%, transparent); }
+nav .pill { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; border-radius: 9px; background: #2e2e30; box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 4px 14px rgba(0,0,0,.35);
+  transition: transform .5s var(--spring), width .5s var(--spring); z-index: 0; }
+nav .pill.instant { transition: none; }
+nav button { border: 0; background: none; padding: 6px 13px; color: var(--muted); border-radius: 9px; font-weight: 500; z-index: 1; overflow: hidden; }
+nav button:hover:not(:disabled) { transform: none; box-shadow: none; color: var(--text); }
+nav button[aria-selected=true] { color: var(--text); }
+nav .count { display: inline-block; font-size: 11px; font-weight: 600; background: var(--accent-soft); color: var(--accent); border-radius: 10px; padding: 0 6px; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.libstatus { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.bar { width: 0; height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; opacity: 0; transition: width .5s var(--ease), opacity .4s; }
+.bar.on { width: 120px; opacity: 1; }
+.bar > i { display: block; height: 100%; width: 0; border-radius: 3px; transition: width .6s var(--ease);
+  background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent)); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+main { max-width: 1180px; margin: 0 auto; padding: 32px 24px 80px; }
+.panel { background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+h2 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.03em; font-weight: 700; }
+.sub { color: var(--muted); margin: 0 0 22px; max-width: 70ch; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12px; }
+.hidden { display: none !important; }
+.err { background: var(--need-soft); color: var(--need); border-radius: 12px; padding: 11px 14px; margin: 14px 0; }
+.note { background: color-mix(in srgb, var(--panel-2) 80%, transparent); border-radius: 12px; padding: 11px 14px; margin: 14px 0; color: var(--muted); }
+
+.checkform { display: flex; gap: 10px; }
+.checkform input { flex: 1; font-size: 15px; padding: 13px 16px; border-radius: 12px; }
+.checkform button { padding: 0 22px; border-radius: 12px; font-size: 15px; }
+.recent { margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap; min-height: 28px; }
+.recent button { font-size: 12.5px; padding: 3px 11px; border-radius: 20px; color: var(--muted); background: color-mix(in srgb, var(--panel) 70%, transparent); }
+.recent button:hover:not(:disabled) { color: var(--text); }
+
+.plhead { display: flex; gap: 16px; align-items: center; margin: 30px 0 16px; flex-wrap: wrap; }
+.plhead img { width: 60px; height: 60px; border-radius: 12px; object-fit: cover; background: var(--panel-2); box-shadow: var(--shadow); }
+.pltitle { font-weight: 700; font-size: 18px; letter-spacing: -.01em; }
+.chips { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; min-height: 30px; }
+.chip { border-radius: 20px; padding: 5px 13px; font-size: 13px; font-weight: 600; border: 1.5px solid transparent; background: var(--panel-2); font-variant-numeric: tabular-nums; }
+.chip:hover:not(:disabled) { box-shadow: none; }
+.chip[aria-pressed=true] { border-color: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 12%, transparent); }
+.chip.have { color: var(--have); background: var(--have-soft); }
+.chip.maybe { color: var(--maybe); background: var(--maybe-soft); }
+.chip.need { color: var(--need); background: var(--need-soft); }
+.chip.up { color: var(--info); background: var(--info-soft); }
+.chip.free { color: var(--accent); background: var(--accent-soft); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+
+/* Lists */
+.list { position: relative; }
+.item { display: grid; grid-template-columns: 34px 80px minmax(0, 1fr); gap: 2px 14px; padding: 14px 18px; border-top: 1px solid var(--line); transition: background-color .3s; }
+.item:first-child { border-top-color: transparent; }
+.item:hover { background: var(--hover); }
+.item .n { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.uitem { grid-template-columns: 170px minmax(0, 1fr); }
+.sctitle { font-weight: 600; text-decoration: none; transition: color .2s; }
+a.sctitle:hover { color: var(--accent); }
+.byline { font-size: 12.5px; color: var(--muted); }
+.badge { display: inline-block; font-size: 11.5px; font-weight: 650; border-radius: 6px; padding: 2px 8px; letter-spacing: .01em; white-space: nowrap; text-transform: capitalize; }
+.badge.have { background: var(--have-soft); color: var(--have); }
+.badge.maybe { background: var(--maybe-soft); color: var(--maybe); }
+.badge.need { background: var(--need-soft); color: var(--need); }
+.badge.unavailable { background: var(--panel-2); color: var(--muted); }
+.badge.ready { background: var(--have-soft); color: var(--have); text-transform: none; }
+.badge.check { background: var(--maybe-soft); color: var(--maybe); text-transform: none; }
+.badge.bad { background: var(--need-soft); color: var(--need); text-transform: none; }
+.q { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--panel-2); color: var(--muted); white-space: nowrap; }
+.q.ll { color: var(--have); }
+.q.low { color: var(--need); background: var(--need-soft); }
+.q.rb { color: var(--info); background: var(--info-soft); }
+.file { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 4px; display: flex; gap: 7px; align-items: baseline; flex-wrap: wrap; }
+.file .path { color: var(--text); opacity: .85; }
+.cand { margin-top: 8px; padding: 9px 12px; background: var(--maybe-soft); border-radius: 10px; font-size: 12.5px; }
+.cand + .cand { margin-top: 5px; }
+.stores { display: flex; gap: 12px; font-size: 12.5px; margin-top: 6px; flex-wrap: wrap; }
+.stores a { color: var(--muted); text-decoration-color: color-mix(in srgb, var(--muted) 35%, transparent); text-underline-offset: 2px; transition: color .2s; }
+.stores a:hover { color: var(--accent); }
+.dl { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.dl a { font-size: 12.5px; font-weight: 600; text-decoration: none; border-radius: 8px; padding: 4px 10px; background: var(--accent-soft); color: var(--accent); transition: transform .25s var(--ease), box-shadow .3s var(--ease); }
+.dl a:hover { transform: translateY(-1px); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 22%, transparent); }
+.dl a.buy { background: var(--panel-2); color: var(--text); font-weight: 500; }
+.dl a.buy:hover { box-shadow: 0 6px 16px rgba(0,0,0,.35); }
+.dl .off { font-size: 12.5px; color: var(--muted); padding: 4px 0; }
+.warn { font-size: 12.5px; color: var(--maybe); margin-top: 6px; }
+.empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+
+/* Skeletons */
+.skel { display: block; height: 11px; border-radius: 6px; margin: 5px 0; background: linear-gradient(90deg, var(--panel-2) 20%, color-mix(in srgb, var(--line) 80%, var(--panel)) 50%, var(--panel-2) 80%); background-size: 200% 100%; animation: shimmer 1.5s ease-in-out infinite; }
+.skel.inline { display: inline-block; vertical-align: middle; margin: 0; }
+.list.dim > * { opacity: .45; filter: saturate(.6); transition: opacity .4s, filter .4s; }
+
+/* Duplicates */
+.group { padding: 16px 18px; border-top: 1px solid var(--line); }
+.group:first-child { border-top-color: transparent; }
+.group h3 { margin: 0 0 8px; font-size: 14.5px; font-weight: 650; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.copy { display: grid; grid-template-columns: 22px 150px 48px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 8px; margin: 0 -8px; font-size: 13px; border-radius: 9px; cursor: pointer; transition: background-color .25s; }
+.copy:hover { background: var(--hover); }
+.copy input { accent-color: var(--accent); cursor: pointer; }
+.copy .path { word-break: break-all; transition: color .35s; }
+.copy .path span { background: linear-gradient(var(--need), var(--need)) no-repeat 0 58% / 0% 1.5px; -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-size .5s var(--ease); }
+.copy.drop .path { color: var(--muted); }
+.copy.drop .path span { background-size: 100% 1.5px; }
+.gwarn:empty { display: none; }
+
+.settings { display: grid; gap: 18px; }
+.setting { padding: 20px 22px; }
+.setting h3 { margin: 0 0 4px; font-size: 15px; letter-spacing: -.01em; }
+.setting .val { font-family: var(--mono); font-size: 13px; padding: 9px 12px; background: var(--panel-2); border-radius: 10px; word-break: break-all; margin: 12px 0; transition: background-color .8s; }
+ol.steps { margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
+
+/* ---------- Library ---------- */
+:root { --hdr: 57px; --player: 76px; }
+body.on-library main { max-width: none; padding: 0; }
+main { padding-bottom: calc(var(--player) + 40px); }
+.libview { display: grid; grid-template-columns: 272px minmax(0, 1fr) 0px; height: calc(100vh - var(--hdr) - var(--player)); transition: grid-template-columns .5s var(--ease); }
+.libview.with-detail { grid-template-columns: 272px minmax(0, 1fr) 380px; }
+.side { border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; padding: 18px 14px; overflow: auto; background: color-mix(in srgb, var(--panel) 45%, transparent); }
+.src { padding: 4px 6px 2px; }
+.src .k { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; display: flex; gap: 6px; align-items: center; }
+.src .n { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--have); box-shadow: 0 0 0 3px color-mix(in srgb, var(--have) 22%, transparent); }
+.dot.warn { background: var(--maybe); box-shadow: 0 0 0 3px color-mix(in srgb, var(--maybe) 22%, transparent); }
+.import { width: 100%; padding: 10px 12px; border-radius: 12px; }
+.pendbox { background: var(--maybe-soft); color: var(--maybe); border-radius: 12px; padding: 11px 12px; font-size: 12.5px; }
+.pendbox b { color: var(--text); font-weight: 600; }
+.pendbox .row { margin-top: 8px; }
+.tree { display: flex; flex-direction: column; gap: 1px; }
+.tsec { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; padding: 14px 8px 6px; }
+.tnode { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; border-radius: 9px; color: var(--muted); font-size: 13.5px; white-space: nowrap; }
+.tnode:hover:not(:disabled) { background: var(--hover); color: var(--text); transform: none; box-shadow: none; }
+.tnode[aria-current=true] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text); }
+.tnode .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.tnode .ct { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tnode .ic { width: 16px; text-align: center; flex: none; opacity: .8; }
+.tnode .chev { width: 14px; flex: none; transition: transform .35s var(--ease); font-size: 10px; }
+.tnode.open .chev { transform: rotate(90deg); }
+.tkids { overflow: hidden; padding-left: 14px; }
+.tkids.closed { display: none; }
+.scbadge { font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: 0 5px; }
+
+.libmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.lhead { display: flex; align-items: center; gap: 14px; padding: 20px 24px 14px; flex-wrap: wrap; }
+.ltitle { font-size: 24px; font-weight: 700; letter-spacing: -.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lmeta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.lmeta a { color: var(--muted); }
+.tiers { display: flex; gap: 6px; }
+.tier { font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .04em; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+.tier.low { color: var(--need); background: var(--need-soft); }
+.tier.normal { color: var(--maybe); background: var(--maybe-soft); }
+.tier.hq { color: var(--info); background: var(--info-soft); }
+.tier.uhq { color: var(--have); background: var(--have-soft); }
+.tier.none { color: var(--muted); background: var(--panel-2); }
+button.tier { border: 1.5px solid transparent; padding: 3px 9px; font-size: 11px; }
+button.tier[aria-pressed=true] { border-color: currentColor; }
+#search { width: 220px; }
+.thead, .trow { display: grid; grid-template-columns: 44px minmax(0, 1fr) 58px 52px 52px 88px var(--getw, 0px); gap: 10px; align-items: center; padding: 0 20px 0 14px; }
+.thead { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 650; height: 30px; border-bottom: 1px solid var(--line); }
+.libmain.sc { --getw: 230px; }
+.c-n, .c-bpm, .c-key, .c-time { text-align: right; font-variant-numeric: tabular-nums; }
+.vlist { flex: 1; overflow: auto; position: relative; outline: none; }
+.vspace { position: relative; }
+.trow { position: absolute; left: 0; right: 0; height: 56px; cursor: default; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); transition: background-color .25s; }
+.trow:hover { background: var(--hover); }
+.trow.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.trow.playing .tt { color: var(--accent); }
+.trow.ghost .tt, .trow.ghost .ta { opacity: .55; }
+.trow .n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; position: relative; }
+.trow .pl { position: absolute; right: 0; top: 50%; transform: translateY(-50%) scale(.8); opacity: 0; border: 0; background: var(--accent); color: var(--accent-ink); width: 26px; height: 26px; border-radius: 50%; padding: 0; font-size: 10px; transition: opacity .2s, transform .3s var(--spring); }
+.trow:hover .pl, .trow.playing .pl { opacity: 1; transform: translateY(-50%) scale(1); }
+.trow:hover .nn, .trow.playing .nn { opacity: 0; }
+.tt { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color .3s; }
+.ta { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ta .cuedot { color: var(--accent); }
+.trow .num { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.get { display: flex; gap: 5px; justify-content: flex-end; overflow: hidden; }
+.get a, .get span { font-size: 11.5px; font-weight: 600; text-decoration: none; border-radius: 7px; padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.get a { background: var(--accent-soft); color: var(--accent); transition: transform .25s var(--ease), box-shadow .3s; }
+.get a:hover { transform: translateY(-1px); box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 25%, transparent); }
+.get a.alt { background: var(--panel-2); color: var(--text); font-weight: 500; }
+.get .st { color: var(--muted); font-weight: 500; }
+.lempty { padding: 60px 20px; text-align: center; color: var(--muted); }
+
+/* Detail panel */
+.detail { border-left: 1px solid var(--line); overflow: hidden auto; background: color-mix(in srgb, var(--panel) 55%, transparent); }
+#detailBody { width: 380px; padding: 20px 20px 30px; }
+.dx { position: sticky; top: 0; float: right; border: 0; background: var(--panel-2); width: 28px; height: 28px; border-radius: 50%; padding: 0; }
+.dtitle { font-size: 18px; font-weight: 700; letter-spacing: -.02em; margin-right: 34px; }
+.dartist { color: var(--muted); margin-top: 2px; }
+.dwave { position: relative; margin: 18px 0 8px; height: 96px; border-radius: 12px; background: var(--panel-2); overflow: hidden; cursor: pointer; }
+.dwave canvas { width: 100%; height: 100%; display: block; }
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
+.fact { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; }
+.fact .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.fact .v { font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dsec { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; margin: 18px 0 8px; }
+.pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pad { border: 0; border-radius: 10px; padding: 8px 6px 7px; text-align: left; background: var(--panel-2); color: var(--muted); min-height: 50px; }
+.pad.set { background: color-mix(in srgb, var(--c) 22%, var(--panel-2)); color: var(--text); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c) 70%, transparent); }
+.pad.set:hover:not(:disabled) { box-shadow: inset 0 0 0 1.5px var(--c), 0 6px 18px color-mix(in srgb, var(--c) 30%, transparent); }
+.pad .l { font-weight: 800; font-size: 13px; color: var(--c, var(--muted)); }
+.pad .t { font-family: var(--mono); font-size: 10.5px; opacity: .8; }
+.pad .cm { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clist { display: flex; flex-direction: column; gap: 4px; }
+.citem { display: flex; gap: 10px; align-items: center; border: 0; background: var(--panel-2); border-radius: 9px; padding: 7px 10px; width: 100%; text-align: left; font-size: 12.5px; }
+.citem .mk { width: 9px; height: 9px; border-radius: 2px; background: var(--c); flex: none; }
+.citem .tm { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.dpath { font-family: var(--mono); font-size: 11.5px; color: var(--muted); word-break: break-all; margin-top: 6px; }
+
+/* Player */
+.player { position: fixed; left: 0; right: 0; bottom: 0; height: var(--player); z-index: 12; display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent); backdrop-filter: saturate(1.5) blur(20px); -webkit-backdrop-filter: saturate(1.5) blur(20px); border-top: 1px solid var(--line); }
+.pbtn { border: 0; background: none; width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 14px; color: var(--muted); }
+.pbtn:hover:not(:disabled) { color: var(--text); background: var(--hover); box-shadow: none; }
+.pbtn.play { width: 44px; height: 44px; background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: var(--accent-ink); font-size: 15px; box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 35%, transparent); }
+.pbtn.play:hover:not(:disabled) { background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
+.pinfo { width: 230px; min-width: 0; }
+.ptitle { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.partist { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pwave { flex: 1; min-width: 0; position: relative; height: 52px; }
+.pwave canvas { width: 100%; height: 40px; display: block; cursor: pointer; }
+.ptime { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+#pVol { width: 90px; accent-color: var(--accent); }
+@media (max-width: 900px) {
+  .libview, .libview.with-detail { grid-template-columns: minmax(0, 1fr); }
+  .side { display: none; }
+  .detail { position: fixed; inset: auto 0 var(--player) 0; height: 62vh; z-index: 11; border-left: 0; border-top: 1px solid var(--line); border-radius: 18px 18px 0 0;
+    background: var(--panel); box-shadow: 0 -20px 50px rgba(0,0,0,.5); transform: translateY(110%); transition: transform .5s var(--ease); }
+  .libview.with-detail .detail { transform: none; }
+  #detailBody { width: auto; }
+  .thead, .trow { grid-template-columns: 30px minmax(0, 1fr) 70px var(--getw, 0px); }
+  .c-bpm, .c-key, .c-time, .trow .num { display: none; }
+  .libmain.sc { --getw: 110px; }
+  .pinfo { width: 120px; } #pVol, #pPrev, #pNext { display: none; }
+}
+
+/* Import dialog */
+.jprog { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; margin: 4px 0 12px; }
+.jprog i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 3px; transition: width .5s var(--ease); }
+.jsteps { display: flex; flex-direction: column; gap: 2px; }
+.jstep { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 5px 4px; font-size: 12.5px; border-radius: 8px; }
+.jstep .ic { text-align: center; font-weight: 800; }
+.jstep .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jstep .nt { color: var(--muted); font-size: 11.5px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jstep.have .ic, .jstep.downloaded .ic { color: var(--have); }
+.jstep.skipped .ic, .jstep.queued .ic { color: var(--muted); }
+.jstep.failed .ic { color: var(--need); }
+.jstep.maybe .ic { color: var(--maybe); }
+.jstep.downloading { background: var(--hover); }
+.jstep .mini { width: 60px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.jstep .mini i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.jsum { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+
+/* Dialogs */
+dialog { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); color: var(--text); padding: 0; width: min(660px, calc(100vw - 32px)); box-shadow: 0 24px 80px rgba(0,0,0,.28); overflow: hidden; }
+dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.dlg-h { padding: 18px 20px 10px; font-weight: 700; font-size: 15.5px; letter-spacing: -.01em; }
+.dlg-b { padding: 0 20px; max-height: 58vh; overflow: auto; }
+.dlg-f { padding: 14px 20px; display: flex; gap: 8px; justify-content: flex-end; border-top: 1px solid var(--line); margin-top: 14px; }
+.crumbs { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 8px; }
+.dirlist { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--line); border-radius: 12px; }
+.dirlist li { padding: 7px 11px; cursor: pointer; display: flex; gap: 8px; border-radius: 8px; transition: background-color .2s, transform .25s var(--ease); }
+.dirlist li:hover { background: var(--panel-2); transform: translateX(2px); }
+.dirlist li.sel { background: var(--accent-soft); color: var(--accent); }
+.roots { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.roots button { font-size: 12px; padding: 3px 10px; border-radius: 20px; }
+.plan { padding: 14px 0; border-top: 1px solid var(--line); }
+.plan:first-child { border-top: 0; padding-top: 2px; }
+.plan .ft { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 4px; }
+.plan .ft b { color: var(--text); font-weight: 500; }
+.steps-box { background: var(--panel-2); border-radius: 12px; padding: 12px 16px; margin-top: 14px; font-size: 13px; }
+.steps-box ol { margin: 6px 0 0; padding-left: 18px; }
+.steps-box li { margin: 4px 0; }
+
+/* Toasts */
+#toasts { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 30; pointer-events: none; width: max-content; max-width: calc(100vw - 32px); }
+.toast { display: flex; gap: 10px; align-items: center; background: color-mix(in srgb, #2a2a2c 92%, transparent); color: var(--text); border: 1px solid rgba(255,255,255,.07); padding: 10px 16px 10px 12px; border-radius: 14px; font-size: 13.5px; box-shadow: 0 12px 34px rgba(0,0,0,.25); backdrop-filter: blur(10px); }
+.toast .ti { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; background: rgba(255,255,255,.1); flex: none; }
+.toast.ok .ti { background: var(--have); color: #08140d; }
+.toast.err .ti { background: var(--need); color: #fff; }
+
+/* Tab changes (View Transitions, where supported) */
+::view-transition-group(*) { animation-duration: .45s; animation-timing-function: var(--ease); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .3s; }
+::view-transition-old(header) { display: none; }
+::view-transition-new(header) { animation: none; }
+html[data-vt] main { view-transition-name: main; }
+::view-transition-old(main), ::view-transition-new(main) { height: 100%; object-fit: none; object-position: top; overflow: clip; }
+html[data-vt=fwd]::view-transition-old(main) { animation: .24s var(--ease) both vt-out-l; }
+html[data-vt=fwd]::view-transition-new(main) { animation: .5s var(--ease) both vt-in-r; }
+html[data-vt=back]::view-transition-old(main) { animation: .24s var(--ease) both vt-out-r; }
+html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both vt-in-l; }
+@keyframes vt-out-l { to { opacity: 0; transform: translateX(-28px); filter: blur(6px); } }
+@keyframes vt-out-r { to { opacity: 0; transform: translateX(28px); filter: blur(6px); } }
+@keyframes vt-in-r { from { opacity: 0; transform: translateX(36px); filter: blur(6px); } }
+@keyframes vt-in-l { from { opacity: 0; transform: translateX(-36px); filter: blur(6px); } }
+
+@media (max-width: 720px) {
+  header { padding: 10px 16px; gap: 10px; }
+  main { padding: 20px 16px 60px; }
+  h2 { font-size: 22px; }
+  .checkform { flex-direction: column; }
+  .checkform button { padding: 11px; }
+  .item { grid-template-columns: 70px minmax(0, 1fr); padding: 13px 14px; }
+  .item .n { display: none; }
+  .uitem { grid-template-columns: minmax(0, 1fr); }
+  .copy { grid-template-columns: 22px minmax(0, 1fr); row-gap: 2px; }
+  .copy > :nth-child(3), .copy > :nth-child(5) { display: none; }
+  .copy .path { grid-column: 2; }
+  section > .row:first-child { flex-direction: column; align-items: stretch; }
+  .libstatus { margin-left: 0; width: 100%; }
+  nav { order: 3; width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .plhead .actions { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  body::before, body::after, header::after { animation: none !important; }
+}
+</style>
+</head>
+<body>
+<header id="hdr">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <defs><linearGradient id="dg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9a55"/><stop offset=".6" stop-color="#ff5500"/></linearGradient></defs>
+      <g id="disc">
+        <circle cx="16" cy="16" r="15" fill="url(#dg)"/>
+        <circle cx="16" cy="16" r="11.5" fill="none" stroke="rgba(0,0,0,.2)" stroke-width=".7"/>
+        <circle cx="16" cy="16" r="8.8" fill="none" stroke="rgba(0,0,0,.12)" stroke-width=".7"/>
+        <path d="M16 1 A15 15 0 0 1 29.5 9.5 L16 16 Z" fill="rgba(255,255,255,.22)"/>
+        <circle cx="16" cy="16" r="5" style="fill: var(--panel)"/>
+        <circle cx="16" cy="16" r="1.6" style="fill: var(--accent)"/>
+      </g>
+    </svg>
+    SuperSync
+  </div>
+  <nav role="tablist" id="nav">
+    <span class="pill" id="pill" aria-hidden="true"></span>
+    <button role="tab" data-tab="library" aria-selected="true">Library</button>
+    <button role="tab" data-tab="dupes">Duplicates<span class="count hidden" id="dupeCount"></span></button>
+    <button role="tab" data-tab="upgrades">Upgrades<span class="count hidden" id="upCount"></span></button>
+    <button role="tab" data-tab="settings">Settings</button>
+  </nav>
+  <div class="libstatus">
+    <span id="libText"></span>
+    <div class="bar" id="scanBar"><i></i></div>
+    <button class="small" id="rescan">Rescan</button>
+  </div>
+</header>
+
+<main>
+  <!-- LIBRARY -->
+  <section data-panel="library" class="libview">
+    <aside class="side">
+      <div class="src" id="srcBox"></div>
+      <button class="primary import" id="importBtn"><span aria-hidden="true">⬇</span> Import SoundCloud playlist</button>
+      <div class="pendbox hidden" id="pendBox"></div>
+      <div class="tree" id="tree"></div>
+    </aside>
+    <div class="libmain">
+      <div class="lhead">
+        <div class="grow" style="min-width:0">
+          <div class="ltitle" id="plName">Collection</div>
+          <div class="lmeta" id="plMeta"></div>
+        </div>
+        <div class="tiers" id="tierChips"></div>
+        <input type="text" id="search" placeholder="Search…" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="thead" id="thead"><span class="c-n">#</span><span>Title</span><span class="c-bpm">BPM</span><span class="c-key">Key</span><span class="c-time">Time</span><span class="c-q">Quality</span><span class="c-get"></span></div>
+      <div class="vlist" id="vlist" tabindex="0"><div class="vspace" id="vspace"></div></div>
+    </div>
+    <aside class="detail" id="detail" aria-hidden="true"><div id="detailBody"></div></aside>
+  </section>
+
+  <!-- DUPLICATES -->
+  <section data-panel="dupes" class="hidden">
+    <div class="row" style="align-items:flex-start">
+      <div class="grow">
+        <h2>Duplicates</h2>
+        <p class="sub">Tracks that appear more than once. The best-quality copy is selected to keep; extras move to a <span class="mono">_SuperSync Duplicates</span> folder inside your music folder, so nothing is deleted.</p>
+      </div>
+      <div class="row">
+        <button id="undoBtn" class="hidden">Restore moved files</button>
+        <button id="cuesAll" class="hidden">Carry over cues</button>
+        <button class="primary" id="moveAll" disabled>Move all extras</button>
+      </div>
+    </div>
+    <div id="dupeErr" class="err hidden"></div>
+    <div id="dupeNote" class="note hidden"></div>
+    <div class="panel"><div class="list" id="groups"></div></div>
+  </section>
+
+  <!-- UPGRADES -->
+  <section data-panel="upgrades" class="hidden">
+    <div class="row" style="align-items:flex-start">
+      <div class="grow">
+        <h2>Upgrades</h2>
+        <p class="sub" id="upSub">Tracks where your only copy is below the quality bar, e.g. a SoundCloud rip. Buy them properly and rescan; they'll drop off this list.</p>
+      </div>
+      <div class="row">
+        <input type="text" id="upFilter" placeholder="Filter…">
+        <button id="upCsv">Export CSV</button>
+      </div>
+    </div>
+    <div id="upErr" class="err hidden"></div>
+    <div class="panel"><div class="list" id="upRows"></div></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section data-panel="settings" class="hidden">
+    <h2>Settings</h2>
+    <p class="sub">Saved on this computer.</p>
+    <div class="settings" id="settingsList">
+      <div class="panel setting">
+        <h3>Library</h3>
+        <div class="muted" id="srcNote">SuperSync works directly on rekordbox's own library, found automatically.</div>
+        <div class="val" id="srcVal">…</div>
+        <div class="row"><button id="pickDb">Choose rekordbox library…</button><button class="link" id="autoDb">Find automatically</button><button id="addFolder" class="hidden">Add music folder to library</button></div>
+        <ul class="steps" style="margin-top:12px">
+          <li>SuperSync reads rekordbox's library directly, so it's always current.</li>
+          <li>It only writes (new playlists and downloaded tracks) while rekordbox is closed, and backs the library up first, keeping the last 10 backups.</li>
+        </ul>
+      </div>
+      <div class="panel setting">
+        <h3>Download folder</h3>
+        <div class="muted">Imported SoundCloud tracks are saved in a <span class="mono">SoundCloud</span> folder inside it. Moved duplicates go in here too.</div>
+        <div class="val" id="musicVal">Not set</div>
+        <button class="primary" id="pickMusic">Choose folder…</button>
+      </div>
+      <div class="panel setting">
+        <h3>SoundCloud login <span class="muted" style="font-weight:400">(optional)</span></h3>
+        <div class="muted">SuperSync only downloads tracks whose artist has turned on SoundCloud's download button. Without a login it saves the MP3 stream. With your login token it gets the artist's original upload instead, which is often a WAV.</div>
+        <ol class="steps">
+          <li>In your browser, log in at soundcloud.com.</li>
+          <li>Open the developer tools (⌥⌘I on Mac, F12 on Windows) → <b>Application</b> (Chrome) or <b>Storage</b> (Firefox/Safari) → <b>Cookies</b> → <b>https://soundcloud.com</b>.</li>
+          <li>Copy the value of <span class="mono">oauth_token</span> and paste it here. It's stored only on this computer.</li>
+        </ol>
+        <div class="row" style="margin-top:12px"><input type="password" id="scToken" placeholder="Paste oauth_token…" autocomplete="off" style="flex:1;min-width:220px"><button id="saveToken">Save</button><button class="link" id="clearToken">Remove</button></div>
+        <div class="muted" id="tokenState" style="margin-top:6px;font-size:12.5px"></div>
+      </div>
+      <div class="panel setting">
+        <h3>Quality bar</h3>
+        <div class="muted">Files below this (MP3-equivalent) are listed under Upgrades. Lossless (WAV, AIFF, FLAC, ALAC) always passes; AAC and Opus count for a bit more than MP3 at the same bitrate.</div>
+        <div class="row" style="margin-top:12px">
+          <select id="minKbps"><option value="192">192 kbps</option><option value="256">256 kbps</option><option value="320">320 kbps</option><option value="1000">Lossless only</option></select>
+        </div>
+      </div>
+      <div class="muted" id="ver"></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="picker">
+  <div class="dlg-h" id="pickTitle">Choose folder</div>
+  <div class="dlg-b">
+    <div class="roots" id="pickRoots"></div>
+    <div class="crumbs" id="pickPath"></div>
+    <ul class="dirlist" id="pickList"></ul>
+  </div>
+  <div class="dlg-f">
+    <button id="pickCancel">Cancel</button>
+    <button class="primary" id="pickOk">Use this folder</button>
+  </div>
+</dialog>
+
+<dialog id="cuesDlg">
+  <div class="dlg-h">Carry cues over to the copies you're keeping</div>
+  <div class="dlg-b" id="cuesBody"></div>
+  <div class="dlg-f"><span class="grow muted" id="cuesFoot" style="font-size:12.5px;align-self:center"></span><button id="cuesClose">Close</button><button class="primary" id="cuesXml" disabled>Download rekordbox XML</button></div>
+</dialog>
+
+<dialog id="confirm">
+  <div class="dlg-h" id="confTitle"></div>
+  <div class="dlg-b" id="confBody"></div>
+  <div class="dlg-f"><button id="confNo">Cancel</button><button class="primary" id="confYes">Move</button></div>
+</dialog>
+
+<dialog id="importDlg">
+  <div class="dlg-h" id="impTitle">Import a SoundCloud playlist</div>
+  <div class="dlg-b" id="impBody"></div>
+  <div class="dlg-f"><span class="grow muted" id="impFoot" style="font-size:12.5px;align-self:center"></span><button id="impClose">Close</button><button class="primary" id="impGo">Import</button></div>
+</dialog>
+
+<div class="player" id="player">
+  <button class="pbtn" id="pPrev" title="Previous" aria-label="Previous">⏮</button>
+  <button class="pbtn play" id="pPlay" title="Play (Space)" aria-label="Play">▶</button>
+  <button class="pbtn" id="pNext" title="Next" aria-label="Next">⏭</button>
+  <div class="pinfo"><div class="ptitle" id="pTitle">Nothing playing</div><div class="partist" id="pArtist">Double-click a track to play it</div></div>
+  <div class="pwave"><canvas id="pWave"></canvas><div class="ptime"><span id="pCur">0:00</span><span id="pDur">0:00</span></div></div>
+  <input type="range" id="pVol" min="0" max="1" step="0.01" value="0.9" title="Volume" aria-label="Volume">
+</div>
+<audio id="audio" preload="metadata"></audio>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtSize = b => b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB";
+// "Artist – Title" from tags, or the filename when tags are missing or already contain the artist.
+const trackName = f => !f.title ? f.rel.split("/").pop().replace(/\.[^.]+$/, "")
+  : f.artist && !/ [-–—] /.test(f.title) ? `${f.artist} – ${f.title}` : f.title;
+const fmtDur = s => s ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "";
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// ================= motion toolkit =================
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+// No animation when the user asked for less motion, or while the tab is in the
+// background (animations don't advance there, and nobody's watching).
+const motion = () => !reducedMotion.matches && !document.hidden && !!Element.prototype.animate;
+const EASE = "cubic-bezier(.22, 1, .36, 1)";
+const SPRING = "cubic-bezier(.34, 1.4, .64, 1)";
+const nothing = Promise.resolve();
+
+function anim(el, frames, opts = {}) {
+  if (!motion() || !el) return null;
+  return el.animate(frames, { duration: 420, easing: EASE, fill: "backwards", ...opts });
+}
+const done = a => a ? a.finished.catch(() => {}) : nothing;
+const inView = el => { const r = el.getBoundingClientRect(); return r.bottom > -120 && r.top < innerHeight + 120; };
+
+// Animate an element's height across a DOM change.
+function smoothHeight(el, update) {
+  const h0 = el.getBoundingClientRect().height;
+  update();
+  if (!motion()) return nothing;
+  const h1 = el.getBoundingClientRect().height;
+  if (Math.abs(h1 - h0) < 2) return nothing;
+  const prev = el.style.overflow;
+  el.style.overflow = "hidden";
+  const a = el.animate([{ height: h0 + "px" }, { height: h1 + "px" }], { duration: 460, easing: EASE });
+  return done(a).then(() => { el.style.overflow = prev; });
+}
+
+// Morph a button's label while its width glides to fit.
+function morphButton(btn, html) {
+  const w0 = btn.getBoundingClientRect().width;
+  btn.innerHTML = html;
+  if (!motion()) return;
+  const w1 = btn.getBoundingClientRect().width;
+  if (Math.abs(w1 - w0) > 1) btn.animate([{ width: w0 + "px" }, { width: w1 + "px" }], { duration: 380, easing: EASE });
+  anim(btn, [{ color: "transparent" }, {}], { duration: 260, easing: "ease-out" });
+}
+
+// Collapse an element away (used when files are moved).
+function collapse(el) {
+  if (!motion()) { el.style.display = "none"; return nothing; }
+  const h = el.getBoundingClientRect().height;
+  el.style.overflow = "hidden";
+  return done(el.animate([
+    { height: h + "px", opacity: 1, transform: "none" },
+    { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px", transform: "scale(.98)" },
+  ], { duration: 480, easing: EASE, fill: "forwards" }));
+}
+
+// Briefly tint an element to draw the eye to a change.
+function flash(el) {
+  const c = getComputedStyle(document.documentElement).getPropertyValue("--accent-soft").trim();
+  anim(el, [{ backgroundColor: c }, {}], { duration: 1100, easing: "ease-out" });
+}
+
+// Pop a small badge when its value changes.
+function bump(el) { anim(el, [{ transform: "scale(1.45)" }, { transform: "scale(1)" }], { duration: 520, easing: SPRING }); }
+
+// Count a number up from its previous value.
+const counts = {};
+function countTo(el, key, to) {
+  const from = counts[key] ?? 0;
+  counts[key] = to;
+  if (!motion() || from === to) { el.textContent = to.toLocaleString(); return; }
+  const t0 = performance.now(), d = 700;
+  const step = now => {
+    const p = Math.min(1, (now - t0) / d), e = 1 - Math.pow(1 - p, 4);
+    el.textContent = Math.round(from + (to - from) * e).toLocaleString();
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// Keyed list updates: rows that stay glide to their new place (FLIP), rows that
+// leave fade out, new rows rise in with a gentle stagger, changed rows flash.
+// items: [{ key, html, cls, tag? }]
+async function patchList(box, items, { fresh = false } = {}) {
+  if (fresh) box.replaceChildren();
+  const old = new Map($$(":scope > [data-k]", box).map(n => [n.dataset.k, n]));
+  const keys = new Set(items.map(i => i.key));
+  const strays = $$(":scope > :not([data-k])", box);
+  const gone = [...old].filter(([k]) => !keys.has(k)).map(([, n]) => n);
+  if (motion()) {
+    const leaving = [...strays, ...gone].filter(inView).slice(0, 60);
+    await Promise.all(leaving.map(n => done(n.animate([{ opacity: 1 }, { opacity: 0, transform: "translateY(-4px) scale(.985)" }],
+      { duration: 170, easing: "ease-in", fill: "forwards" }))));
+  }
+  strays.forEach(n => n.remove());
+  gone.forEach(n => n.remove());
+
+  const first = new Map();
+  if (motion()) old.forEach((n, k) => { if (keys.has(k) && inView(n)) first.set(k, n.getBoundingClientRect()); });
+
+  const fresh_ = [], changed = [];
+  let prev = null;
+  for (const it of items) {
+    let n = old.get(it.key);
+    if (n && keys.has(it.key)) {
+      if (n._html !== it.html) { n.innerHTML = it.html; n._html = it.html; changed.push(n); }
+      if (it.cls && n.className !== it.cls) n.className = it.cls;
+    } else {
+      n = document.createElement(it.tag || "div");
+      n.className = it.cls || "";
+      n.dataset.k = it.key;
+      n.innerHTML = it.html; n._html = it.html;
+      fresh_.push(n);
+    }
+    const want = prev ? prev.nextSibling : box.firstChild;
+    if (n !== want) box.insertBefore(n, want);
+    prev = n;
+  }
+  if (!motion()) return;
+  first.forEach((r0, k) => {
+    const n = old.get(k), r1 = n.getBoundingClientRect();
+    const dx = r0.left - r1.left, dy = r0.top - r1.top;
+    if (Math.abs(dx) + Math.abs(dy) > 1) n.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 520, easing: EASE });
+  });
+  let i = 0;
+  for (const n of fresh_) {
+    if (!inView(n)) continue;
+    n.animate([{ opacity: 0, transform: "translateY(12px)" }, { opacity: 1, transform: "none" }],
+      { duration: 520, easing: EASE, delay: Math.min(i++, 16) * 32, fill: "backwards" });
+  }
+  changed.filter(inView).forEach(flash);
+}
+
+// Stagger the children of an element into view.
+function rise(nodes, { gap = 40, dist = 14 } = {}) {
+  [...nodes].forEach((n, i) => anim(n, [{ opacity: 0, transform: `translateY(${dist}px)` }, { opacity: 1, transform: "none" }],
+    { duration: 560, delay: Math.min(i, 16) * gap }));
+}
+
+// Dialogs: scale up on open, sink away on close; Esc and backdrop clicks close smoothly.
+function openDlg(d) {
+  d.getAnimations({ subtree: true }).forEach(a => a.cancel());
+  d.showModal();
+  anim(d, [{ opacity: 0, transform: "translateY(18px) scale(.96)" }, { opacity: 1, transform: "none" }], { duration: 520, easing: SPRING });
+  anim(d, [{ opacity: 0 }, { opacity: 1 }], { duration: 380, pseudoElement: "::backdrop" });
+}
+async function closeDlg(d) {
+  if (!d.open) return;
+  const a = anim(d, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(10px) scale(.97)" }], { duration: 200, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" });
+  anim(d, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, pseudoElement: "::backdrop", fill: "forwards" });
+  await done(a);
+  d.close();
+  d.getAnimations({ subtree: true }).forEach(x => x.cancel());
+}
+$$("dialog").forEach(d => {
+  d.addEventListener("cancel", e => { e.preventDefault(); closeDlg(d); d.onDismiss?.(); });
+  d.addEventListener("click", e => {
+    if (e.target !== d) return;
+    const r = d.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) { closeDlg(d); d.onDismiss?.(); }
+  });
+});
+
+// Soft ripple from the pointer on every press.
+document.addEventListener("pointerdown", e => {
+  const b = e.target.closest("button:not(.link):not(:disabled)");
+  if (!b || !motion()) return;
+  const r = b.getBoundingClientRect(), s = Math.max(r.width, r.height) * 2.4;
+  const sp = document.createElement("span");
+  sp.className = "ripple";
+  sp.style.cssText = `width:${s}px;height:${s}px;left:${e.clientX - r.left - s / 2}px;top:${e.clientY - r.top - s / 2}px`;
+  b.append(sp);
+  sp.animate([{ transform: "scale(0)", opacity: .22 }, { transform: "scale(1)", opacity: 0 }], { duration: 750, easing: "cubic-bezier(.2,.7,.3,1)" }).onfinish = () => sp.remove();
+});
+
+// Toasts slide up with a little spring and drift away.
+function toast(msg, kind = "") {
+  const t = document.createElement("div");
+  t.className = "toast " + kind;
+  t.innerHTML = `<span class="ti">${kind === "ok" ? "✓" : kind === "err" ? "!" : "i"}</span><span>${esc(msg)}</span>`;
+  $("#toasts").append(t);
+  anim(t, [{ opacity: 0, transform: "translateY(18px) scale(.94)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: SPRING });
+  setTimeout(async () => {
+    await done(anim(t, [{ opacity: 1 }, { opacity: 0, transform: "translateY(8px) scale(.97)" }], { duration: 260, easing: "ease-in", fill: "forwards" }));
+    await smoothHeight($("#toasts"), () => t.remove());
+  }, kind === "err" ? 5200 : 3400);
+}
+
+// Errors and notes grow open instead of popping.
+function showErr(el, e) {
+  const show = !!e;
+  if (show) el.textContent = e.message || e;
+  if (show === !el.classList.contains("hidden")) return;
+  if (show) { el.classList.remove("hidden"); anim(el, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }]); }
+  else el.classList.add("hidden");
+}
+
+// The record in the logo spins up while SuperSync is working and coasts to a stop.
+const disc = $("#disc");
+disc.style.transformOrigin = "16px 16px";
+const discAnim = motion() ? disc.animate([{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }], { duration: 1100, iterations: Infinity }) : null;
+let discRate = 0, discTarget = 0, discLoop = false;
+if (discAnim) discAnim.playbackRate = 0;
+function discTick() {
+  discRate += (discTarget - discRate) * 0.045;
+  if (Math.abs(discTarget - discRate) < 0.004) discRate = discTarget;
+  discAnim.playbackRate = discRate;
+  if (discRate !== discTarget) requestAnimationFrame(discTick); else discLoop = false;
+}
+let busyCount = 0, scanBusy = false;
+function setBusy(delta) {
+  busyCount = Math.max(0, busyCount + delta);
+  const on = busyCount > 0 || scanBusy;
+  document.body.classList.toggle("busy", on);
+  discTarget = on ? 1 : 0;
+  if (discAnim && !discLoop) { discLoop = true; requestAnimationFrame(discTick); }
+}
+
+addEventListener("scroll", () => $("#hdr").classList.toggle("scrolled", scrollY > 4), { passive: true });
+
+// ================= app =================
+// The token arrives in the URL fragment; keep it for this tab and remember it.
+let token = new URLSearchParams(location.hash.slice(1)).get("t") || store.get("token", "");
+if (token) store.set("token", token);
+
+async function api(path, body) {
+  const opt = { headers: { "X-SuperSync-Token": token } };
+  if (body !== undefined) { opt.method = "POST"; opt.body = JSON.stringify(body); opt.headers["Content-Type"] = "application/json"; }
+  const r = await fetch("/api/" + path, opt);
+  if (r.status === 401) throw new Error("This page lost its connection key. Open SuperSync again from its window (the link it prints).");
+  const ct = r.headers.get("Content-Type") || "";
+  if (!ct.includes("json")) { if (!r.ok) throw new Error(await r.text()); return r; }
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+// ---------- tabs ----------
+const TABS = ["library", "dupes", "upgrades", "settings"];
+const loaders = {};
+let curTab = null;
+function movePill(instant) {
+  const b = $(`nav button[data-tab="${curTab}"]`), pill = $("#pill");
+  if (!b) return;
+  if (instant) pill.classList.add("instant");
+  pill.style.width = b.offsetWidth + "px";
+  pill.style.transform = `translateX(${b.offsetLeft}px)`;
+  if (instant) { pill.offsetWidth; pill.classList.remove("instant"); }
+}
+function measureHeader() { document.documentElement.style.setProperty("--hdr", $("#hdr").offsetHeight + "px"); }
+addEventListener("resize", () => { movePill(true); measureHeader(); });
+function selectTab(name) {
+  if (name === curTab) { loaders[name]?.(); return; }
+  const prev = curTab;
+  const apply = () => {
+    document.body.classList.toggle("on-library", name === "library");
+    $$("nav button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
+    $$("[data-panel]").forEach(p => p.classList.toggle("hidden", p.dataset.panel !== name));
+    if (prev) scrollTo({ top: 0, behavior: "instant" });
+  };
+  curTab = name;
+  movePill(!prev);
+  store.set("tab", name);
+  const dir = TABS.indexOf(name) > TABS.indexOf(prev) ? "fwd" : "back";
+  if (prev && motion() && document.startViewTransition) {
+    document.documentElement.dataset.vt = dir;
+    document.startViewTransition(apply).finished.finally(() => delete document.documentElement.dataset.vt);
+  } else {
+    apply();
+    if (prev) anim($(`[data-panel="${name}"]`), [{ opacity: 0, transform: `translateX(${dir === "fwd" ? 28 : -28}px)`, filter: "blur(5px)" }, { opacity: 1, transform: "none", filter: "blur(0)" }], { duration: 520 });
+  }
+  if (name === "settings" && prev) rise($("#settingsList").children, { gap: 55 });
+  loaders[name]?.();
+}
+$$("nav button").forEach(b => b.onclick = () => selectTab(b.dataset.tab));
+
+// ---------- state / scanning ----------
+let S = {};
+let libVersion = "";
+function setVal(el, text) { if (el.textContent !== text) { el.textContent = text; if (libVersion) flash(el); } }
+function setCount(el, n) {
+  const was = el.textContent;
+  el.textContent = n;
+  el.classList.toggle("hidden", !n);
+  if (String(n) !== was && n) bump(el);
+  movePill();
+}
+let pollTimer;
+async function refresh() {
+  clearTimeout(pollTimer);
+  try { S = await api("state"); } catch (e) { pollTimer = setTimeout(refresh, 5000); throw e; }
+  $("#ver").textContent = "SuperSync " + S.version;
+  setVal($("#musicVal"), S.musicDir || "Not set");
+  const src = S.source;
+  setVal($("#srcVal"), src ? `${src.kind === "rekordbox" ? "rekordbox" : "SuperSync's own library"}: ${src.path}` : (S.sourceErr || "Not found"));
+  $("#srcNote").textContent = src?.note || (S.sourceErr ? S.sourceErr : "SuperSync works directly on rekordbox's own library, found automatically.");
+  $("#addFolder").classList.toggle("hidden", src?.kind !== "supersync");
+  $("#tokenState").textContent = S.hasToken ? "Saved. Downloads use the artist's original file where SoundCloud allows it." : "Not set. Downloads use the MP3 stream.";
+  $("#minKbps").value = String(S.minKbps);
+  const undo = $("#undoBtn");
+  if (!!S.quarantined === undo.classList.contains("hidden")) {
+    undo.classList.toggle("hidden", !S.quarantined);
+    if (S.quarantined) anim(undo, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
+  }
+  undo.textContent = `Restore moved files (${S.quarantined})`;
+  renderPending();
+  if (libData && src) {
+    const wasRunning = libData.source.running;
+    libData.source.running = src.running;
+    if (wasRunning !== src.running) renderSource();
+    // rekordbox changed its library (or we did): reload the tree and the open list.
+    if (src.loadedAt !== libLoaded && src.loadedAt) { libLoaded = src.loadedAt; loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); }
+  }
+  const bar = $("#scanBar");
+  const wasScanning = scanBusy;
+  scanBusy = !!S.scanning;
+  if (scanBusy !== wasScanning) setBusy(0);
+  if (S.scanning) {
+    const pct = S.scanning.total ? S.scanning.done / S.scanning.total * 100 : 4;
+    const verb = S.scanning.phase === "quality" ? "Checking for upscales" : "Reading files";
+    $("#libText").textContent = S.scanning.total ? `${verb} ${S.scanning.done.toLocaleString()} / ${S.scanning.total.toLocaleString()}` : verb + "…";
+    bar.classList.add("on"); $("i", bar).style.width = pct + "%";
+    $("#rescan").disabled = true;
+    pollTimer = setTimeout(refresh, 400);
+  } else {
+    bar.classList.remove("on"); $("i", bar).style.width = "0";
+    $("#rescan").disabled = !src;
+    const text = !src ? "No library" : S.tracks ? `${S.tracks.toLocaleString()} files · ${Math.round(S.lossless / S.tracks * 100)}% lossless${S.upscaled ? ` · ${S.upscaled} upscaled` : ""}` : "Not scanned yet";
+    if ($("#libText").textContent !== text) { $("#libText").textContent = text; anim($("#libText"), [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }]); }
+    if (S.scanErr) toast("Scan failed: " + S.scanErr, "err");
+    const v = S.scannedAt + S.tracks + "/" + S.upscaled;
+    if (v !== libVersion) { const first = !libVersion; libVersion = v; if (!first) onLibraryChanged(); }
+    pollTimer = setTimeout(refresh, 3000); // rekordbox open/closed, pending changes
+  }
+  return S;
+}
+function onLibraryChanged() {
+  dupesLoaded = upsLoaded = false;
+  if (curTab === "dupes" || curTab === "upgrades") loaders[curTab]();
+  if (cur.id) openList(cur.id, { quiet: true }); // qualities may have changed
+}
+async function scan() {
+  try { await api("scan", {}); } catch (e) { toast(e.message, "err"); }
+  refresh();
+}
+$("#rescan").onclick = scan;
+
+// ---------- shared helpers ----------
+function qBadge(f, upgrade) {
+  const cls = upgrade || f.upscaled ? "low" : f.lossless ? "ll" : "";
+  const label = f.upscaled ? `${f.quality} → ~${f.trueKbps}` : f.quality;
+  return `<span class="q ${cls}" ${f.upscaled ? `title="Upscaled: ${esc(f.upscaled)}"` : ""}>${esc(label)}</span>` + (f.inRekordbox ? ` <span class="q rb" title="In your rekordbox library">RB${f.cues ? " · " + f.cues + " cues" : ""}</span>` : "");
+}
+function storeLinks(l) {
+  return `<div class="stores"><a href="${esc(l.beatport)}" target="_blank" rel="noopener">Beatport</a><a href="${esc(l.bandcamp)}" target="_blank" rel="noopener">Bandcamp</a><a href="${esc(l.traxsource)}" target="_blank" rel="noopener">Traxsource</a></div>`;
+}
+function safe(s) { return String(s).replace(/[\/\\:*?"<>|]/g, "-").trim() || "playlist"; }
+function saveBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+const csvCell = s => /[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? "");
+function skeleton(n, cls, cells) {
+  return Array.from({ length: n }, (_, i) => `<div class="${cls}">${cells(i)}</div>`).join("");
+}
+const fmtTime = ms => fmtDur(ms / 1000) || "0:00";
+const searchURL = q => "https://www.beatport.com/search?q=" + encodeURIComponent(q);
+
+// ---------- library ----------
+const TIER_LABEL = { low: "LOW", normal: "NORMAL", hq: "HQ", uhq: "UHQ" };
+const TIER_TIP = { low: "Low: under 128 kbps", normal: "Normal: about 128 kbps", hq: "HQ: about 256 kbps", uhq: "UHQ: over 256 kbps or lossless" };
+const ROW_H = 56;
+let libData = null, libLoaded = "";
+const cur = { id: null, data: null, view: [] };
+let tierFilter = null, selIdx = -1;
+const pool = new Map();
+
+loaders.library = async () => {
+  await loadLibrary();
+  if (!cur.data) openList(store.get("pl", "all"));
+};
+
+async function loadLibrary() {
+  try { libData = await api("library"); }
+  catch (e) { $("#tree").innerHTML = `<div class="lempty">${esc(e.message)}</div>`; return; }
+  libLoaded = libData.source.loadedAt;
+  renderSource();
+  renderTree();
+}
+
+function renderSource() {
+  const s = libData?.source;
+  if (!s) return;
+  $("#srcBox").innerHTML = `<div class="k"><span class="dot ${s.running ? "warn" : ""}"></span>${s.kind === "rekordbox" ? "rekordbox library" : "SuperSync library"}</div>
+    <div class="n">${s.tracks.toLocaleString()} tracks · ${s.playlists} playlist${s.playlists === 1 ? "" : "s"}${s.running ? " · rekordbox is open" : ""}</div>`;
+}
+
+function renderTree() {
+  const open = store.get("open", {});
+  const node = (p, depth) => {
+    const cnt = p.kind === "folder" ? "" : `<span class="ct">${p.count}</span>`;
+    const ic = p.kind === "folder" ? "" : p.kind === "smart" ? "✦" : p.sc ? "☁" : "♪";
+    if (p.kind === "folder") {
+      const isOpen = open[p.id] !== false;
+      return `<button class="tnode ${isOpen ? "open" : ""}" data-folder="${esc(p.id)}"><span class="chev">▶</span><span class="nm">${esc(p.name)}</span></button>
+        <div class="tkids ${isOpen ? "" : "closed"}" data-kids="${esc(p.id)}">${(p.children || []).map(c => node(c, depth + 1)).join("")}</div>`;
+    }
+    return `<button class="tnode" data-pl="${esc(p.id)}" ${p.kind === "smart" ? 'disabled title="Smart playlists are shown in rekordbox"' : ""}><span class="ic">${ic}</span><span class="nm">${esc(p.name)}</span>${cnt}</button>`;
+  };
+  const scNodes = [];
+  const walk = ps => (ps || []).forEach(p => { if (p.sc) scNodes.push(p); walk(p.children); });
+  walk(libData.playlists);
+  const pend = (libData.pendingSC || []).map(p => `<button class="tnode" data-pl="sc:${esc(p.url)}"><span class="ic">☁</span><span class="nm">${esc(p.title)}</span><span class="scbadge" title="Waiting for rekordbox to close">PENDING</span></button>`);
+  $("#tree").innerHTML = `<button class="tnode" data-pl="all"><span class="ic">◉</span><span class="nm">Collection</span><span class="ct">${libData.source.tracks.toLocaleString()}</span></button>`
+    + (scNodes.length || pend.length ? `<div class="tsec">From SoundCloud</div>` + scNodes.map(p => node(p, 0)).join("") + pend.join("") : "")
+    + `<div class="tsec">Playlists</div>` + ((libData.playlists || []).map(p => node(p, 0)).join("") || `<div class="muted" style="padding:6px 8px;font-size:12.5px">No playlists yet.</div>`);
+  markCurrent();
+}
+function markCurrent() { $$("#tree [data-pl]").forEach(b => b.setAttribute("aria-current", b.dataset.pl === cur.id)); }
+
+$("#tree").addEventListener("click", e => {
+  const f = e.target.closest("[data-folder]");
+  if (f) {
+    const kids = $(`[data-kids="${CSS.escape(f.dataset.folder)}"]`);
+    const open = store.get("open", {});
+    const opening = kids.classList.contains("closed");
+    open[f.dataset.folder] = opening;
+    store.set("open", open);
+    f.classList.toggle("open", opening);
+    if (opening) {
+      kids.classList.remove("closed");
+      const h = kids.scrollHeight;
+      anim(kids, [{ height: "0px", opacity: 0 }, { height: h + "px", opacity: 1 }], { duration: 380 });
+    } else {
+      const h = kids.scrollHeight;
+      const a = anim(kids, [{ height: h + "px", opacity: 1 }, { height: "0px", opacity: 0 }], { duration: 300, fill: "forwards" });
+      done(a).then(() => { kids.classList.add("closed"); kids.getAnimations().forEach(x => x.cancel()); });
+    }
+    return;
+  }
+  const b = e.target.closest("[data-pl]");
+  if (b && !b.disabled) openList(b.dataset.pl);
+});
+
+async function openList(id, { quiet = false } = {}) {
+  const changed = id !== cur.id;
+  cur.id = id;
+  store.set("pl", id);
+  markCurrent();
+  if (changed && !quiet) {
+    $("#vspace").style.height = "0px";
+    pool.forEach(el => el.remove()); pool.clear();
+    $("#vspace").innerHTML = skeleton(8, "trow", i => `<span></span><span><span class="skel" style="width:${40 + (i * 13) % 35}%"></span><span class="skel" style="width:${20 + (i * 7) % 20}%"></span></span>`);
+    $$("#vspace .trow").forEach((el, i) => el.style.transform = `translateY(${i * ROW_H}px)`);
+  }
+  let data;
+  try { data = await api("library/tracks?playlist=" + encodeURIComponent(id)); }
+  catch (e) { if (id === "all") { toast(e.message, "err"); return; } return openList("all"); }
+  if (cur.id !== id) return;
+  const keepScroll = !changed;
+  cur.data = data;
+  if (changed) { tierFilter = null; $("#search").value = ""; selIdx = -1; }
+  renderListHead(changed);
+  applyFilter(changed && !quiet, keepScroll);
+}
+
+function renderListHead(animate) {
+  const d = cur.data;
+  $("#plName").textContent = d.name;
+  const total = d.rows.reduce((a, r) => a + (r.length || 0), 0);
+  const notIn = d.rows.filter(r => !r.id).length;
+  let meta = `${d.rows.length.toLocaleString()} track${d.rows.length === 1 ? "" : "s"} · ${Math.floor(total / 3600) ? Math.floor(total / 3600) + " h " : ""}${Math.round(total % 3600 / 60)} min`;
+  if (d.sc) meta += ` · from <a href="${esc(d.sc.url)}" target="_blank" rel="noopener">SoundCloud</a>${notIn ? ` · ${notIn} not in your library` : ""}${d.sc.pending ? " · waiting for rekordbox to close" : ""}`;
+  $("#plMeta").innerHTML = meta;
+  $(".libmain").classList.toggle("sc", !!d.sc);
+  const tiers = ["low", "normal", "hq", "uhq"].filter(t => d.tiers[t]);
+  $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
+    + (notIn ? `<button class="tier none" data-tier="missing" aria-pressed="${tierFilter === "missing"}" title="SoundCloud tracks not in your library yet">NEED ${notIn}</button>` : "");
+  if (animate) { rise([$("#plName"), $("#plMeta")], { gap: 60, dist: 6 }); rise($("#tierChips").children, { gap: 40, dist: 6 }); }
+}
+$("#tierChips").addEventListener("click", e => {
+  const b = e.target.closest("[data-tier]");
+  if (!b) return;
+  tierFilter = tierFilter === b.dataset.tier ? null : b.dataset.tier;
+  $$("#tierChips [data-tier]").forEach(x => x.setAttribute("aria-pressed", x.dataset.tier === tierFilter));
+  applyFilter(true);
+});
+let searchTimer;
+$("#search").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => applyFilter(false), 90); });
+
+function applyFilter(animate, keepScroll) {
+  const q = $("#search").value.trim().toLowerCase();
+  const words = q ? q.split(/\s+/) : [];
+  cur.view = cur.data.rows.filter(r => {
+    if (tierFilter === "missing" ? !!r.id : tierFilter && r.tier !== tierFilter) return false;
+    if (!words.length) return true;
+    const hay = `${r.title} ${r.artist} ${r.album || ""} ${r.genre || ""} ${r.key || ""} ${r.sc?.title || ""}`.toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
+  const vl = $("#vlist");
+  $("#vspace").innerHTML = "";
+  pool.clear();
+  $("#vspace").style.height = cur.view.length * ROW_H + "px";
+  if (!keepScroll) vl.scrollTop = 0;
+  if (!cur.view.length) {
+    $("#vspace").innerHTML = `<div class="lempty">${cur.data.rows.length ? "Nothing matches." : cur.id === "all" ? "Your library is empty." : "This playlist is empty."}</div>`;
+    return;
+  }
+  renderRows(animate);
+}
+
+function renderRows(animate) {
+  const vl = $("#vlist"), top = vl.scrollTop, h = vl.clientHeight || 600;
+  const first = Math.max(0, Math.floor(top / ROW_H) - 6), last = Math.min(cur.view.length, Math.ceil((top + h) / ROW_H) + 6);
+  for (const [i, el] of pool) if (i < first || i >= last) { el.remove(); pool.delete(i); }
+  let k = 0;
+  for (let i = first; i < last; i++) {
+    if (pool.has(i)) continue;
+    const r = cur.view[i];
+    const el = document.createElement("div");
+    el.className = "trow";
+    el.dataset.i = i;
+    el.style.transform = `translateY(${i * ROW_H}px)`;
+    el.innerHTML = rowHtml(r, i);
+    paintRow(el, r, i);
+    $("#vspace").append(el);
+    pool.set(i, el);
+    if (animate && motion() && i * ROW_H < top + h) {
+      el.animate([{ opacity: 0, transform: `translateY(${i * ROW_H + 12}px)` }, { opacity: 1, transform: `translateY(${i * ROW_H}px)` }],
+        { duration: 480, easing: EASE, delay: Math.min(k++, 14) * 26, fill: "backwards" });
+    }
+  }
+}
+function paintRow(el, r, i) {
+  el.classList.toggle("sel", i === selIdx);
+  el.classList.toggle("playing", !!r.id && r.id === nowPlaying?.id);
+  el.classList.toggle("ghost", !r.id || r.missing);
+}
+function repaintRows() { pool.forEach((el, i) => paintRow(el, cur.view[i], i)); }
+$("#vlist").addEventListener("scroll", () => requestAnimationFrame(() => renderRows(false)), { passive: true });
+addEventListener("resize", () => { if (cur.data) renderRows(false); });
+
+function tierBadge(r) {
+  if (!r.id) return `<span class="tier none" title="${esc(r.note || "")}">${r.status === "maybe" ? "MAYBE" : "NEED"}</span>`;
+  if (r.missing) return `<span class="tier none" title="The file isn't where the library says it is">MISSING</span>`;
+  if (!r.tier) return "";
+  return `<span class="tier ${r.tier}" title="${esc(TIER_TIP[r.tier] + " · " + (r.format || "").toUpperCase() + " " + (r.kbps || "") + " kbps" + (r.tierNote ? " · " + r.tierNote : ""))}">${TIER_LABEL[r.tier]}</span>`;
+}
+// The better-copy buttons go where SoundCloud's own buttons go: the download
+// button (on the track's page; SoundCloud requires a login there) or the buy link.
+function getHtml(r) {
+  if (!cur.data?.sc || !r.sc || (r.id && r.tier === "uhq")) return "";
+  const out = [];
+  if (r.sc.downloadable) out.push(r.sc.downloadsLeft
+    ? `<a href="${esc(r.sc.url)}" target="_blank" rel="noopener" title="The artist's own file. Opens the track on SoundCloud: log in, then ⋯ More → Download file.">⬇ SoundCloud</a>`
+    : `<span class="st" title="The uploader's download limit is used up">Limit reached</span>`);
+  for (const l of r.sc.links || []) {
+    if (out.length >= 2) break;
+    const free = l.kind === "download" || l.free;
+    out.push(`<a class="${free ? "" : "alt"}" href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc((l.from === "buy button" ? "SoundCloud buy button" : "From the description") + ": " + l.url)}">${free ? "⬇ " + esc(l.label) : "Buy · " + esc(l.label)}</a>`);
+  }
+  if (!out.length) out.push(`<a class="alt" href="${esc(searchURL(r.sc.title))}" target="_blank" rel="noopener">Search Beatport</a>`);
+  return out.join("");
+}
+function rowHtml(r, i) {
+  const sub = [r.artist, r.album].filter(Boolean).join(" · ");
+  const bpm = r.bpm ? (r.bpm % 1 ? r.bpm.toFixed(1) : r.bpm.toFixed(0)) : "";
+  return `<div class="n"><span class="nn">${i + 1}</span>${r.id && !r.missing ? `<button class="pl" data-play="${i}" aria-label="Play" tabindex="-1">▶</button>` : ""}</div>
+    <div style="min-width:0"><div class="tt">${esc(r.title || r.sc?.title || "")}</div><div class="ta">${esc(sub)}${r.cues ? ` <span class="cuedot" title="${r.cues} cue${r.cues === 1 ? "" : "s"}">◆</span>` : ""}</div></div>
+    <div class="num">${bpm}</div><div class="num">${esc(r.key || "")}</div><div class="num">${fmtDur(r.length)}</div>
+    <div>${tierBadge(r)}</div><div class="get">${getHtml(r)}</div>`;
+}
+
+$("#vlist").addEventListener("click", e => {
+  const row = e.target.closest(".trow");
+  if (!row || e.target.closest("a")) return;
+  const i = Number(row.dataset.i);
+  if (e.target.closest("[data-play]")) { playIndex(i); return; }
+  select(i);
+});
+$("#vlist").addEventListener("dblclick", e => {
+  const row = e.target.closest(".trow");
+  if (row && !e.target.closest("a")) playIndex(Number(row.dataset.i));
+});
+$("#vlist").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    select(Math.max(0, Math.min(cur.view.length - 1, selIdx + (e.key === "ArrowDown" ? 1 : -1))), true);
+  } else if (e.key === "Enter" && selIdx >= 0) playIndex(selIdx);
+});
+
+function select(i, scrollIntoView) {
+  selIdx = i;
+  repaintRows();
+  if (scrollIntoView) {
+    const vl = $("#vlist"), y = i * ROW_H;
+    if (y < vl.scrollTop) vl.scrollTop = y;
+    else if (y + ROW_H > vl.scrollTop + vl.clientHeight) vl.scrollTop = y + ROW_H - vl.clientHeight;
+  }
+  openDetail(cur.view[i]);
+}
+
+// ---------- detail panel ----------
+const PALETTE = ["#e62828", "#e6286e", "#e628c8", "#b428e6", "#6428e6", "#2846e6", "#28a0e6", "#28e6d2", "#28e678", "#50e628", "#aae628", "#e6e628", "#e6a028", "#e66428", "#e64628", "#ff5500"];
+function cueColor(c) {
+  if (c.rgb) return c.rgb;
+  if (c.color > 0) return PALETTE[(c.color - 1) % PALETTE.length];
+  return c.outMs > c.inMs ? "#ff9a1f" : c.hot ? "#28e214" : "#e62828";
+}
+let detail = null; // { row, track, cues, wave }
+let detailSeq = 0;
+async function openDetail(r) {
+  if (!r) return;
+  const lv = $(".libview");
+  const wasOpen = lv.classList.contains("with-detail");
+  lv.classList.add("with-detail");
+  $("#detail").setAttribute("aria-hidden", "false");
+  const seq = ++detailSeq;
+  if (!r.id) { renderDetail({ row: r }, wasOpen); return; }
+  let info;
+  try { info = await api("track/" + encodeURIComponent(r.id)); } catch (e) { toast(e.message, "err"); return; }
+  if (seq !== detailSeq) return;
+  detail = { row: r, track: info.track, cues: info.cues || [], playlists: info.playlists || [], wave: null };
+  renderDetail(detail, wasOpen);
+  const wf = await getWave(r.id);
+  if (seq !== detailSeq || !wf) return;
+  detail.wave = wf;
+  drawAll();
+  anim($("#dWave canvas"), [{ opacity: 0 }, { opacity: 1 }], { duration: 600 });
+}
+function closeDetail() {
+  $(".libview").classList.remove("with-detail");
+  $("#detail").setAttribute("aria-hidden", "true");
+  detail = null; selIdx = -1; repaintRows();
+}
+function renderDetail(d, wasOpen) {
+  const r = d.row, t = d.track;
+  const body = $("#detailBody");
+  let h = `<button class="dx" id="dClose" aria-label="Close">✕</button>`;
+  if (!t) {
+    const sc = r.sc;
+    h += `<div class="dtitle">${esc(sc?.title || r.title)}</div><div class="dartist">${esc(sc?.uploader || "")}</div>
+      <div class="note" style="margin-top:16px">${r.status === "maybe" ? "A similar file is in your music folder but wasn't counted as the same track." : "Not in your library yet."}${r.note ? " " + esc(r.note) + "." : ""}</div>
+      ${sc ? `<div class="dsec">Get it</div><div class="get" style="justify-content:flex-start;flex-wrap:wrap">${getHtml(r) || ""}</div>
+      <div class="dsec">SoundCloud</div><a href="${esc(sc.url)}" target="_blank" rel="noopener" class="muted">${esc(sc.url)}</a>` : ""}`;
+  } else {
+    const hot = d.cues.filter(c => c.hot > 0), mem = d.cues.filter(c => !c.hot && c.outMs <= c.inMs), loops = d.cues.filter(c => c.outMs > c.inMs);
+    const pads = "ABCDEFGH".split("").map((L, i) => {
+      const c = hot.find(x => x.hot === i + 1);
+      return c ? `<button class="pad set" style="--c:${cueColor(c)}" data-cue="${c.inMs}" title="Play from ${L}"><div class="l">${L}</div><div class="t">${fmtTime(c.inMs)}</div><div class="cm">${esc(c.comment)}</div></button>`
+        : `<button class="pad" disabled><div class="l">${L}</div></button>`;
+    }).join("");
+    const list = (cs, loop) => cs.length ? `<div class="clist">${cs.map(c => `<button class="citem" style="--c:${cueColor(c)}" data-cue="${c.inMs}"><span class="mk"></span><span class="tm">${fmtTime(c.inMs)}${loop ? " – " + fmtTime(c.outMs) : ""}</span><span class="grow">${esc(c.comment || (loop ? "Loop" : "Memory cue"))}</span></button>`).join("")}</div>` : `<div class="muted" style="font-size:12.5px">None</div>`;
+    const stars = t.rating ? "★".repeat(t.rating) : "–";
+    h += `<div class="dtitle">${esc(t.title)}</div><div class="dartist">${esc(t.artist)}${t.album ? " · " + esc(t.album) : ""}</div>
+      <div class="dwave" id="dWave" title="Click to play from here"><canvas></canvas></div>
+      <div class="facts">
+        <div class="fact"><div class="k">BPM</div><div class="v">${t.bpm ? t.bpm.toFixed(2).replace(/\.?0+$/, "") : "–"}</div></div>
+        <div class="fact"><div class="k">Key</div><div class="v">${esc(t.key || "–")}</div></div>
+        <div class="fact"><div class="k">Time</div><div class="v">${fmtDur(t.length) || "–"}</div></div>
+        <div class="fact"><div class="k">Quality</div><div class="v">${tierBadge(t)}</div></div>
+        <div class="fact"><div class="k">Format</div><div class="v">${esc((t.format || "").toUpperCase())} ${t.kbps || ""}</div></div>
+        <div class="fact"><div class="k">Rating</div><div class="v" style="color:var(--accent)">${stars}</div></div>
+      </div>
+      ${t.tierNote ? `<div class="warn">${esc(t.tierNote)}</div>` : ""}
+      <div class="dsec">Hot cues</div><div class="pads">${pads}</div>
+      <div class="dsec">Memory cues</div>${list(mem, false)}
+      <div class="dsec">Loops</div>${list(loops, true)}
+      ${r.sc && t.tier !== "uhq" ? `<div class="dsec">Better copy</div><div class="get" style="justify-content:flex-start;flex-wrap:wrap">${getHtml(r)}</div>` : ""}
+      ${d.playlists.length ? `<div class="dsec">In playlists</div><div class="muted" style="font-size:12.5px">${d.playlists.map(esc).join("<br>")}</div>` : ""}
+      <div class="dsec">File</div><div class="dpath">${esc(t.path)}</div>
+      <div class="row" style="margin-top:8px"><button class="small" id="dReveal">Show in folder</button>${t.genre ? `<span class="muted" style="font-size:12.5px">${esc(t.genre)}</span>` : ""}</div>`;
+  }
+  body.innerHTML = h;
+  rise(body.children, { gap: wasOpen ? 18 : 35, dist: 8 });
+  $("#dClose").onclick = closeDetail;
+  $("#dReveal")?.addEventListener("click", () => api("reveal", { id: t.id }).catch(e => toast(e.message, "err")));
+  $("#dWave")?.addEventListener("click", e => {
+    const rect = e.currentTarget.getBoundingClientRect(), f = (e.clientX - rect.left) / rect.width;
+    playTrack(r, f * (d.wave?.secs || t.length) * 1000);
+  });
+  body.querySelectorAll("[data-cue]").forEach(b => b.onclick = () => playTrack(r, Number(b.dataset.cue)));
+  drawAll();
+}
+
+// ---------- waveforms ----------
+const waves = new Map();
+async function getWave(id) {
+  if (waves.has(id)) return waves.get(id);
+  try {
+    const r = await fetch(`/api/waveform/${encodeURIComponent(id)}?k=${token}`);
+    if (!r.ok) return null;
+    const w = await r.json();
+    // Go sends byte arrays as base64 (compact); unpack them.
+    for (const k of ["peak", "low", "mid", "high"]) w[k] = Uint8Array.from(atob(w[k] || ""), c => c.charCodeAt(0));
+    waves.set(id, w);
+    return w;
+  } catch { return null; }
+}
+function drawWave(canvas, wf, { cues = [], progress = -1, secs = 0 } = {}) {
+  if (!canvas) return;
+  const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  if (!W || !H) return;
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const dur = wf?.secs || secs;
+  if (wf) {
+    const n = wf.peak.length, mid = H / 2;
+    for (let x = 0; x < W; x++) {
+      const i = Math.min(n - 1, Math.floor(x / W * n));
+      const amp = wf.peak[i] / 255 * (mid - 2);
+      const lo = wf.low[i] / 255, mi = wf.mid[i] / 255, hi = wf.high[i] / 255;
+      // rekordbox-style: lows blue, mids amber, highs white
+      const rC = 30 * lo + 255 * mi + 245 * hi, gC = 110 * lo + 150 * mi + 245 * hi, bC = 255 * lo + 30 * mi + 255 * hi;
+      const played = progress >= 0 && dur && x / W <= progress / dur;
+      g.fillStyle = `rgba(${rC | 0},${gC | 0},${bC | 0},${progress < 0 || played ? 0.95 : 0.4})`;
+      g.fillRect(x, mid - amp, 1, amp * 2);
+    }
+  }
+  if (!dur) return;
+  for (const c of cues) {
+    const x = c.inMs / 1000 / dur * W, col = cueColor(c);
+    if (c.outMs > c.inMs) {
+      g.fillStyle = col + "33";
+      g.fillRect(x, 0, (c.outMs - c.inMs) / 1000 / dur * W, H);
+    }
+    g.fillStyle = col;
+    g.fillRect(x - 0.5, 0, 1.5, H);
+    if (c.hot) {
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 9, 0); g.lineTo(x + 9, 9); g.lineTo(x, 12); g.closePath(); g.fill();
+      if (H > 60) { g.fillStyle = "#000"; g.font = "bold 8px system-ui"; g.fillText("ABCDEFGH"[c.hot - 1] || "", x + 2, 8); }
+    } else {
+      g.beginPath(); g.moveTo(x - 4, H); g.lineTo(x + 4, H); g.lineTo(x, H - 6); g.closePath(); g.fill();
+    }
+  }
+  if (progress >= 0) {
+    const x = progress / dur * W;
+    g.fillStyle = "#fff";
+    g.fillRect(x - 1, 0, 2, H);
+  }
+}
+function drawAll() {
+  const t = au.currentTime;
+  if (detail?.track) drawWave($("#dWave canvas"), detail.wave, { cues: detail.cues, progress: nowPlaying?.id === detail.track.id ? t : -1, secs: detail.track.length });
+  if (nowPlaying) drawWave($("#pWave"), nowPlaying.wave, { cues: nowPlaying.cues, progress: t, secs: nowPlaying.length });
+}
+
+// ---------- player ----------
+const au = $("#audio");
+let nowPlaying = null; // { id, row, wave, cues, length }
+let queue = [], qi = -1;
+au.volume = store.get("vol", 0.9);
+$("#pVol").value = au.volume;
+$("#pVol").oninput = e => { au.volume = Number(e.target.value); store.set("vol", au.volume); };
+
+function playIndex(i) {
+  queue = cur.view.filter(r => r.id && !r.missing);
+  playTrack(cur.view[i]);
+}
+async function playTrack(r, fromMs = 0) {
+  if (!r?.id || r.missing) return;
+  if (nowPlaying?.id !== r.id) {
+    nowPlaying = { id: r.id, row: r, wave: null, cues: [], length: r.length };
+    if (!queue.some(q => q.id === r.id)) queue = cur.view.filter(x => x.id && !x.missing);
+    qi = queue.findIndex(q => q.id === r.id);
+    au.src = `/api/audio/${encodeURIComponent(r.id)}?k=${token}`;
+    const t = $("#pTitle"), a = $("#pArtist");
+    t.textContent = r.title; a.textContent = r.artist || "";
+    rise([t, a], { gap: 60, dist: 6 });
+    if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: r.title, artist: r.artist || "", album: r.album || "" });
+    getWave(r.id).then(w => { if (nowPlaying?.id === r.id) { nowPlaying.wave = w; drawAll(); anim($("#pWave"), [{ opacity: 0 }, { opacity: 1 }], { duration: 500 }); } });
+    api("track/" + encodeURIComponent(r.id)).then(d => { if (nowPlaying?.id === r.id) { nowPlaying.cues = d.cues || []; drawAll(); } }).catch(() => {});
+    repaintRows();
+  }
+  if (fromMs) {
+    if (au.readyState >= 1) au.currentTime = fromMs / 1000;
+    else au.addEventListener("loadedmetadata", () => { au.currentTime = fromMs / 1000; }, { once: true });
+  }
+  try { await au.play(); } catch (e) { if (e.name !== "AbortError") toast("Couldn't play this file in the browser (" + e.message + ")", "err"); }
+}
+function togglePlay() { if (!nowPlaying) { if (selIdx >= 0) playIndex(selIdx); return; } au.paused ? au.play() : au.pause(); }
+function step(d) { if (!queue.length) return; qi = (qi + d + queue.length) % queue.length; playTrack(queue[qi]); }
+$("#pPlay").onclick = togglePlay;
+$("#pNext").onclick = () => step(1);
+$("#pPrev").onclick = () => au.currentTime > 3 ? (au.currentTime = 0) : step(-1);
+au.addEventListener("play", () => { $("#pPlay").textContent = "❚❚"; bump($("#pPlay")); loop(); });
+au.addEventListener("pause", () => { $("#pPlay").textContent = "▶"; drawAll(); });
+au.addEventListener("ended", () => step(1));
+au.addEventListener("loadedmetadata", () => { if (nowPlaying) nowPlaying.length = au.duration; $("#pDur").textContent = fmtDur(au.duration) || "0:00"; });
+au.addEventListener("error", () => { if (nowPlaying) toast("This file can't be played in the browser.", "err"); });
+function loop() {
+  drawAll();
+  $("#pCur").textContent = fmtDur(au.currentTime) || "0:00";
+  if (!au.paused) requestAnimationFrame(loop);
+}
+$("#pWave").addEventListener("click", e => {
+  if (!nowPlaying) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  au.currentTime = (e.clientX - r.left) / r.width * (au.duration || nowPlaying.length);
+  drawAll();
+});
+if ("mediaSession" in navigator) {
+  navigator.mediaSession.setActionHandler("play", () => au.play());
+  navigator.mediaSession.setActionHandler("pause", () => au.pause());
+  navigator.mediaSession.setActionHandler("nexttrack", () => step(1));
+  navigator.mediaSession.setActionHandler("previoustrack", () => step(-1));
+}
+document.addEventListener("keydown", e => {
+  if (e.target.closest("input, select, textarea, dialog[open]")) return;
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  else if (/^[1-8]$/.test(e.key) && nowPlaying) {
+    const c = nowPlaying.cues.find(c => c.hot === Number(e.key));
+    if (c) playTrack(nowPlaying.row, c.inMs);
+  } else if (e.key === "Escape" && detail) closeDetail();
+});
+addEventListener("resize", drawAll);
+
+// ---------- SoundCloud import ----------
+const STEP_IC = { queued: "·", have: "✓", maybe: "?", downloading: "↓", downloaded: "✓", skipped: "–", failed: "✕" };
+let importJob = null, jobTimer = null;
+$("#importBtn").onclick = () => {
+  const d = $("#importDlg");
+  clearTimeout(jobTimer); importJob = null;
+  $("#impTitle").textContent = "Import a SoundCloud playlist";
+  $("#impBody").innerHTML = `<p class="muted" style="margin-top:0">SuperSync makes a playlist from it in your library, inside a <b>SoundCloud</b> folder:</p>
+    <ul class="steps" style="margin:0 0 14px">
+      <li>tracks you already have are added as they are;</li>
+      <li>tracks whose artist turned on SoundCloud's download button are downloaded to <span class="mono">${esc(S.musicDir || "your download folder")}</span> and added;</li>
+      <li>everything else is listed with its free-download or buy link, so you can grab a copy yourself.</li>
+    </ul>
+    <input type="text" id="impUrl" placeholder="https://soundcloud.com/you/sets/friday-night" autocomplete="off" spellcheck="false" style="width:100%;font-size:15px;padding:12px 14px">
+    ${S.source?.running ? `<div class="warn" style="margin-top:10px">rekordbox is open. SuperSync can download now, then add the playlist when you close rekordbox.</div>` : ""}`;
+  $("#impFoot").textContent = S.hasToken ? "Using your SoundCloud login for original files." : "";
+  $("#impGo").disabled = false;
+  morphButton($("#impGo"), "Import");
+  $("#impGo").onclick = startImport;
+  openDlg(d);
+  setTimeout(() => $("#impUrl")?.focus(), 80);
+  $("#impUrl").onkeydown = e => { if (e.key === "Enter") startImport(); };
+};
+$("#impClose").onclick = () => { closeDlg($("#importDlg")); clearTimeout(jobTimer); };
+
+async function startImport() {
+  const url = $("#impUrl")?.value.trim();
+  if (!url) return;
+  if (!S.musicDir) { toast("Choose a download folder in Settings first.", "err"); return; }
+  $("#impGo").disabled = true;
+  morphButton($("#impGo"), '<span class="spin"></span>Starting');
+  let job;
+  try { job = await api("sc/import", { url }); } catch (e) { toast(e.message, "err"); $("#impGo").disabled = false; morphButton($("#impGo"), "Import"); return; }
+  importJob = job;
+  setBusy(+1);
+  await smoothHeight($("#importDlg"), () => {
+    $("#impBody").innerHTML = `<div class="jsum" id="jSum"></div><div class="jprog"><i id="jBar"></i></div><div class="muted" id="jMsg" style="font-size:12.5px;margin-bottom:10px"></div><div class="jsteps" id="jSteps"></div>`;
+  });
+  pollJob();
+}
+async function pollJob() {
+  if (!importJob) return;
+  let j;
+  try { j = await api("jobs/" + importJob.id); } catch (e) { toast(e.message, "err"); setBusy(-1); return; }
+  importJob = j;
+  renderJob(j);
+  if (["done", "error", "waiting"].includes(j.status)) { setBusy(-1); finishJob(j); return; }
+  jobTimer = setTimeout(pollJob, 450);
+}
+function renderJob(j) {
+  $("#impTitle").textContent = j.title ? "Importing " + j.title : "Importing…";
+  const c = {};
+  j.steps?.forEach(s => c[s.state] = (c[s.state] || 0) + 1);
+  const total = j.steps?.length || 0, fin = total - (c.queued || 0) - (c.downloading || 0);
+  $("#jBar").style.width = (j.status === "fetching" ? 3 : total ? fin / total * 100 : 0) + "%";
+  const chip = (k, cls, label) => c[k] ? `<span class="tier ${cls}">${label} ${c[k]}</span>` : "";
+  $("#jSum").innerHTML = chip("have", "uhq", "IN LIBRARY") + chip("downloaded", "hq", "DOWNLOADED") + chip("downloading", "normal", "DOWNLOADING") + chip("maybe", "normal", "MAYBE") + chip("skipped", "none", "NOT DOWNLOADABLE") + chip("failed", "low", "FAILED");
+  const msg = { fetching: "Reading the playlist from SoundCloud…", matching: "Matching against your library…", downloading: "Downloading the tracks artists allow…", applying: "Adding the playlist to your library…" }[j.status] || j.message || "";
+  $("#jMsg").textContent = msg;
+  // Show the interesting ones first: active, then done, then skipped.
+  const order = { downloading: 0, failed: 1, downloaded: 2, have: 3, maybe: 4, queued: 5, skipped: 6 };
+  const steps = (j.steps || []).slice().sort((a, b) => (order[a.state] - order[b.state]) || a.n - b.n).slice(0, 200);
+  patchList($("#jSteps"), steps.map(s => ({ key: "s" + s.n, cls: "jstep " + s.state, html:
+    `<span class="ic">${STEP_IC[s.state] || "·"}</span><span class="nm">${esc(s.title)}</span>` +
+    (s.state === "downloading" ? `<span class="mini"><i style="width:${s.progress > 0 ? s.progress * 100 : 30}%"></i></span>` : `<span class="nt" title="${esc(s.note || "")}">${esc(s.note || "")}</span>`) })));
+}
+function finishJob(j) {
+  const go = $("#impGo");
+  go.disabled = false;
+  if (j.status === "done") {
+    toast(`Added “${j.title}” to your library.`, "ok");
+    $("#jMsg").textContent = "Done. The playlist is in your library under SoundCloud.";
+    morphButton(go, "Open playlist");
+    go.onclick = async () => { await closeDlg($("#importDlg")); selectTab("library"); await loadLibrary(); openList(j.playlistId); };
+    loadLibrary();
+  } else if (j.status === "waiting") {
+    $("#jMsg").innerHTML = `<span class="warn">${esc(j.message)}</span>`;
+    morphButton(go, "Apply now");
+    go.onclick = applyPending;
+    refresh();
+  } else {
+    $("#jMsg").innerHTML = `<span style="color:var(--need)">${esc(j.message || "Import failed")}</span>`;
+    morphButton(go, "Try again");
+    go.onclick = () => $("#importBtn").click();
+  }
+}
+async function applyPending() {
+  setBusy(+1);
+  try {
+    const r = await api("pending/apply", {});
+    toast(`Added ${r.applied} playlist${r.applied === 1 ? "" : "s"} to rekordbox.`, "ok");
+    if ($("#importDlg").open && importJob) { importJob.status = "done"; closeDlg($("#importDlg")); }
+    await loadLibrary();
+    if (cur.id) openList(cur.id, { quiet: true });
+  } catch (e) { toast(e.message, "err"); }
+  finally { setBusy(-1); refresh(); }
+}
+function renderPending() {
+  const box = $("#pendBox"), p = S.pending || [];
+  const show = p.length > 0;
+  if (show) box.innerHTML = `<b>${p.length} change${p.length > 1 ? "s" : ""} waiting</b> for rekordbox to close: ${p.map(c => esc(c.label)).join(", ")}.
+    <div class="row"><button class="small" id="pendApply" ${S.source?.running ? "disabled title='Close rekordbox first'" : ""}>Apply now</button><button class="link" id="pendDiscard">Discard</button></div>`;
+  if (show === box.classList.contains("hidden")) {
+    box.classList.toggle("hidden", !show);
+    if (show) anim(box, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }]);
+  }
+  $("#pendApply")?.addEventListener("click", applyPending);
+  $("#pendDiscard")?.addEventListener("click", async () => { await api("pending/discard", {}); refresh(); loadLibrary(); });
+}
+
+// ---------- duplicates ----------
+let groups = [], keep = {}, dupesLoaded = false;
+const emptyMsg = () => S.musicDir ? "Scan your music folder first." : "Choose your music folder in Settings first.";
+loaders.dupes = async () => {
+  if (dupesLoaded) return;
+  const box = $("#groups");
+  if (!S.tracks) { patchList(box, [{ key: "empty", cls: "empty", html: emptyMsg() }]); return; }
+  if (!box.querySelector("[data-k]:not([data-k=empty])")) {
+    box.innerHTML = skeleton(3, "group", () => `<span class="skel" style="width:34%;height:14px"></span><span class="skel" style="width:72%"></span><span class="skel" style="width:64%"></span>`);
+    rise(box.children, { gap: 60, dist: 8 });
+  }
+  try {
+    const next = await api("dupes");
+    groups = next;
+    dupesLoaded = true;
+    const k = keep; keep = {};
+    groups.forEach(g => keep[g.id] = g.copies.some(c => c.path === k[g.id]) ? k[g.id] : g.copies[0].path);
+    showErr($("#dupeErr"), null);
+    renderDupes();
+  } catch (e) { showErr($("#dupeErr"), e); box.replaceChildren(); }
+};
+function extras(g) { return g.copies.filter(c => c.path !== keep[g.id]); }
+function warnHtml(g) {
+  return needsCues(g) ? `<div class="warn">⚠ Your rekordbox cues are on a copy you're moving. <button class="small" data-cues="${g.id}">Carry cues over to the kept copy</button></div>` : "";
+}
+function groupHtml(g) {
+  const k = g.copies.find(c => c.path === keep[g.id]);
+  const n = extras(g).length;
+  return `<h3><span class="gname">${esc(trackName(k))}</span>
+      ${g.lengthsDiffer ? `<span class="badge maybe" style="text-transform:none">different lengths</span>` : ""}
+      <span class="grow"></span><button class="small" data-move="${g.id}">Move ${n} extra${n > 1 ? "s" : ""}</button></h3>
+    ${g.copies.map(c => `<label class="copy ${c.path === keep[g.id] ? "" : "drop"}">
+      <input type="radio" name="k-${g.id}" value="${esc(c.path)}" ${c.path === keep[g.id] ? "checked" : ""}>
+      <span>${qBadge({ quality: qLabel(c), lossless: c.lossless, inRekordbox: c.inRekordbox, cues: c.cues, upscaled: c.upscaled, trueKbps: c.trueKbps })}</span>
+      <span class="muted">${fmtDur(c.secs)}</span>
+      <span class="path"><span>${esc(c.rel)}</span></span>
+      <button class="link" data-reveal="${esc(c.path)}" type="button">show</button></label>`).join("")}
+    <div class="gwarn">${warnHtml(g)}</div>`;
+}
+function renderDupesChrome() {
+  setCount($("#dupeCount"), groups.length);
+  const auto = groups.filter(g => !g.lengthsDiffer);
+  const n = auto.reduce((a, g) => a + extras(g).length, 0);
+  const bytes = auto.reduce((a, g) => a + extras(g).reduce((b, c) => b + c.size, 0), 0);
+  $("#moveAll").disabled = !n;
+  $("#moveAll").textContent = n ? `Move all extras (${n} file${n > 1 ? "s" : ""}, ${fmtSize(bytes)})` : "Move all extras";
+  const cueGroups = groups.filter(needsCues);
+  const cues = $("#cuesAll");
+  if (!!cueGroups.length === cues.classList.contains("hidden")) {
+    cues.classList.toggle("hidden", !cueGroups.length);
+    if (cueGroups.length) anim(cues, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
+  }
+  cues.textContent = `Carry over cues (${cueGroups.length})`;
+  const skipped = groups.length - auto.length;
+  $("#dupeNote").textContent = `${skipped} group${skipped === 1 ? " has" : "s have"} copies of different lengths (maybe a radio edit and an extended mix). "Move all" skips those; use the buttons on each one if they really are duplicates.`;
+  showErr($("#dupeNote"), skipped ? $("#dupeNote").textContent : null);
+}
+function renderDupes() {
+  renderDupesChrome();
+  const items = groups.length ? groups.map(g => ({ key: "g" + g.id, cls: "group", html: groupHtml(g) }))
+    : [{ key: "empty", cls: "empty", html: "No duplicates found. Nice and tidy." }];
+  patchList($("#groups"), items);
+}
+// Picking a different keeper animates in place: strike-throughs sweep across, the warning grows or folds.
+$("#groups").addEventListener("change", e => {
+  if (e.target.type !== "radio") return;
+  const el = e.target.closest(".group"), g = groups.find(x => "g" + x.id === el.dataset.k);
+  keep[g.id] = e.target.value;
+  $$(".copy", el).forEach(l => l.classList.toggle("drop", $("input", l).value !== keep[g.id]));
+  const k = g.copies.find(c => c.path === keep[g.id]);
+  const name = $(".gname", el);
+  if (name.textContent !== trackName(k)) { name.textContent = trackName(k); anim(name, [{ opacity: 0 }, { opacity: 1 }]); }
+  $("[data-move]", el).textContent = `Move ${extras(g).length} extra${extras(g).length > 1 ? "s" : ""}`;
+  const w = $(".gwarn", el), html = warnHtml(g);
+  if (w.innerHTML !== html) smoothHeight(el, () => { w.innerHTML = html; }).then(() => html && anim(w, [{ opacity: 0 }, { opacity: 1 }]));
+  el._html = groupHtml(g);
+  renderDupesChrome();
+});
+// A group needs its cues carried over when the keeper has none and another copy does.
+function cuePair(g) {
+  const k = g.copies.find(c => c.path === keep[g.id]);
+  if (k.cues > 0) return null;
+  const src = g.copies.filter(c => c !== k && c.cues > 0).sort((a, b) => b.cues - a.cues)[0];
+  return src ? { from: src.path, to: k.path } : null;
+}
+const needsCues = g => !!cuePair(g);
+
+const CUE_LABEL = { ready: ["ready", "Ready"], check: ["check", "Ready, check one cue"], "different-edit": ["bad", "Different edit"], "not-same": ["bad", "Doesn't match"], unreadable: ["bad", "Can't read"] };
+function fmtOffset(v) {
+  if (Math.abs(v) < 0.0005) return "already lined up";
+  return Math.abs(v) < 1 ? `shifted ${v > 0 ? "+" : "−"}${Math.round(Math.abs(v) * 1000)} ms` : `shifted ${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(3)} s`;
+}
+async function carryCues(gs) {
+  const pairs = gs.map(cuePair).filter(Boolean);
+  if (!pairs.length) return;
+  const d = $("#cuesDlg");
+  $("#cuesBody").innerHTML = `<div class="empty"><span class="spin"></span>Lining up the audio of ${pairs.length} track${pairs.length > 1 ? "s" : ""}…</div>`;
+  $("#cuesXml").disabled = true; $("#cuesFoot").textContent = "";
+  openDlg(d);
+  setBusy(+1);
+  let plans;
+  try { plans = await api("cues/plan", { pairs }); }
+  catch (e) { smoothHeight(d, () => $("#cuesBody").innerHTML = `<div class="err">${esc(e.message)}</div>`); return; }
+  finally { setBusy(-1); }
+  const usable = plans.filter(p => p.status === "ready" || p.status === "check");
+  const playlists = [...new Set(usable.flatMap(p => p.playlists || []))];
+  await smoothHeight(d, () => {
+    $("#cuesBody").innerHTML = plans.map(p => {
+      const [cls, label] = CUE_LABEL[p.status] || ["bad", p.status];
+      const ok = p.status === "ready" || p.status === "check";
+      return `<div class="plan">
+        <div class="row"><span class="badge ${cls}">${label}</span><b>${esc(p.name)}</b></div>
+        ${ok ? `<div class="ft">${p.cues} cue${p.cues === 1 ? "" : "s"}${p.grid ? " + beatgrid" : ""}, ${fmtOffset(p.offset)}${p.dropped ? ` · ${p.dropped} fall past the end of the new file and are skipped` : ""}</div>` : ""}
+        <div class="ft">from <b>${esc(p.fromRel)}</b> <span class="q">${esc(p.fromQuality)}</span><br>to <b>${esc(p.toRel)}</b> <span class="q ll">${esc(p.toQuality)}</span></div>
+        ${p.note ? `<div class="warn">${esc(p.note)}</div>` : ""}
+      </div>`;
+    }).join("") + (usable.length ? `<div class="steps-box"><b>Then in rekordbox</b><ol>
+        <li><b>Preferences → Advanced → Database → rekordbox xml</b>: choose the downloaded file as the Imported Library.</li>
+        <li>In the sidebar: <b>rekordbox xml → Playlists → SuperSync</b>, open the “Cues carried over” playlist, select all its tracks, right-click → <b>Import To Collection</b>. If rekordbox asks whether to overwrite existing information, choose yes.</li>
+        <li>Load one of the tracks and check a hot cue lands where it should.</li>
+        ${playlists.length ? `<li>Swap the old copies for the new ones in: <b>${playlists.map(esc).join("</b>, <b>")}</b>. rekordbox doesn't do this by itself.</li>` : ""}
+        <li>Come back here and move the extras.</li></ol></div>` : "");
+    rise($("#cuesBody").children, { gap: 70 });
+  });
+  $("#cuesXml").disabled = !usable.length;
+  morphButton($("#cuesXml"), usable.length ? `Download rekordbox XML (${usable.length} track${usable.length > 1 ? "s" : ""})` : "Download rekordbox XML");
+  $("#cuesFoot").textContent = plans.length - usable.length ? `${plans.length - usable.length} can't be carried over automatically.` : "";
+  $("#cuesXml").onclick = async () => {
+    try {
+      const r = await api("cues/xml", { pairs: usable.map(p => ({ from: p.from, to: p.to })) });
+      const name = `SuperSync cues ${new Date().toISOString().slice(0, 10)}.xml`;
+      saveBlob(await r.blob(), name);
+      toast("Saved " + name, "ok");
+    } catch (e) { toast(e.message, "err"); }
+  };
+}
+$("#cuesClose").onclick = () => closeDlg($("#cuesDlg"));
+$("#cuesAll").onclick = () => carryCues(groups.filter(needsCues));
+
+function qLabel(c) {
+  if (!c.codec) return c.format.toUpperCase();
+  if (c.lossless) return c.bits && c.hz ? `${c.codec} ${c.bits}/${+(c.hz / 1000).toFixed(1)}` : c.codec;
+  return `${c.codec} ${c.kbps}`;
+}
+$("#groups").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.reveal) { e.preventDefault(); api("reveal", { path: b.dataset.reveal }).catch(err => toast(err.message, "err")); }
+  if (b.dataset.move) { const g = groups.find(g => g.id === b.dataset.move); confirmMove(extras(g)); }
+  if (b.dataset.cues) { e.preventDefault(); carryCues([groups.find(g => g.id === b.dataset.cues)]); }
+});
+$("#moveAll").onclick = () => confirmMove(groups.filter(g => !g.lengthsDiffer).flatMap(extras));
+function confirmMove(files) {
+  const d = $("#confirm");
+  $("#confTitle").textContent = `Move ${files.length} file${files.length > 1 ? "s" : ""} to “_SuperSync Duplicates”?`;
+  $("#confBody").innerHTML = `<p class="muted" style="margin-top:0">They stay inside your music folder and can be put back with “Restore moved files”. If rekordbox had any of these in its collection, it will show them as missing. Use the kept copy instead.</p>
+    <ul class="mono" style="padding-left:18px">${files.map(f => `<li>${esc(f.rel)}</li>`).join("")}</ul>`;
+  openDlg(d);
+  $("#confNo").onclick = () => closeDlg(d);
+  $("#confYes").onclick = async () => {
+    await closeDlg(d);
+    setBusy(+1);
+    try {
+      const r = await api("quarantine", { paths: files.map(f => f.path) });
+      // Fold away the groups that are now resolved before the list refreshes.
+      const moved = new Set(files.map(f => f.path));
+      const els = groups.filter(g => g.copies.some(c => moved.has(c.path))).map(g => $(`[data-k="g${g.id}"]`)).filter(Boolean);
+      await Promise.all(els.map(collapse));
+      toast(`Moved ${r.moved} file${r.moved === 1 ? "" : "s"}.`, "ok");
+    } catch (e) { toast(e.message, "err"); }
+    finally { setBusy(-1); }
+    refresh();
+  };
+}
+$("#undoBtn").onclick = async () => {
+  setBusy(+1);
+  try { const r = await api("undo", {}); toast(`Restored ${r.restored} file${r.restored === 1 ? "" : "s"}.`, "ok"); } catch (e) { toast(e.message, "err"); }
+  finally { setBusy(-1); }
+  refresh();
+};
+
+// ---------- upgrades ----------
+let ups = [], upsLoaded = false;
+loaders.upgrades = async () => {
+  if (upsLoaded) return;
+  const box = $("#upRows");
+  if (!S.tracks) { patchList(box, [{ key: "empty", cls: "empty", html: emptyMsg() }]); return; }
+  if (!box.querySelector("[data-k]:not([data-k=empty])")) {
+    box.innerHTML = skeleton(4, "item uitem", i => `<span><span class="skel" style="width:90px;height:15px"></span></span><span><span class="skel" style="width:${40 + i * 9}%"></span><span class="skel" style="width:${60 - i * 7}%"></span></span>`);
+    rise(box.children, { gap: 50, dist: 8 });
+  }
+  try { ups = await api("upgrades"); upsLoaded = true; showErr($("#upErr"), null); renderUps(); } catch (e) { showErr($("#upErr"), e); }
+};
+function renderUps() {
+  setCount($("#upCount"), ups.length);
+  $("#upSub").textContent = `Tracks where your only copy is below ${S.minKbps >= 1000 ? "lossless" : S.minKbps + " kbps"}, e.g. a SoundCloud rip, including files that claim to be 320 or lossless but were converted up from something worse (their sound stops at a lower frequency than a real one). Buy them properly and rescan; they'll drop off this list.`;
+  const q = $("#upFilter").value.toLowerCase();
+  const list = ups.filter(u => !q || (u.rel + " " + u.artist + " " + u.title).toLowerCase().includes(q));
+  const items = list.map(u => ({ key: "u" + u.rel, cls: "item uitem", html: `<div>${qBadge({ quality: qLabel(u), upscaled: u.upscaled, trueKbps: u.trueKbps }, true)}</div><div>
+      <div class="sctitle">${esc(trackName(u))}</div>
+      ${u.upscaled ? `<div class="warn" style="margin:2px 0">Upscaled: labelled ${esc(qLabel(u))} but ${esc(u.upscaled)}.</div>` : /soundcloud rip/i.test(u.reason) ? `<div class="byline">SoundCloud rip</div>` : ""}
+      <div class="file"><span class="path">${esc(u.rel)}</span> <button class="link" data-reveal="${esc(u.path)}">show</button></div>
+      ${storeLinks(u.links)}</div>` }));
+  if (!items.length) items.push({ key: "empty", cls: "empty", html: ups.length ? "No matches." : "Everything meets the quality bar." });
+  patchList($("#upRows"), items);
+}
+$("#upFilter").oninput = renderUps;
+$("#upRows").addEventListener("click", e => { const b = e.target.closest("[data-reveal]"); if (b) api("reveal", { path: b.dataset.reveal }).catch(err => toast(err.message, "err")); });
+$("#upCsv").onclick = () => {
+  const lines = [["Quality", "Artist", "Title", "File", "Beatport", "Bandcamp", "Traxsource"], ...ups.map(u => [u.reason, u.artist, u.title, u.rel, u.links.beatport, u.links.bandcamp, u.links.traxsource])];
+  saveBlob(new Blob([lines.map(l => l.map(csvCell).join(",")).join("\n")], { type: "text/csv" }), "SuperSync upgrades.csv");
+  toast("Saved SuperSync upgrades.csv", "ok");
+};
+
+// ---------- settings ----------
+async function saveSetting(body) {
+  try { await api("settings", body); await refresh(); return true; } catch (e) { toast(e.message, "err"); return false; }
+}
+$("#minKbps").onchange = async e => { await saveSetting({ minKbps: Number(e.target.value) }); upsLoaded = false; };
+$("#pickMusic").onclick = async () => {
+  const dir = await pick("Choose your download folder", S.musicDir);
+  if (dir && await saveSetting({ musicDir: dir })) toast("Downloads will go to " + dir, "ok");
+};
+$("#pickDb").onclick = async () => {
+  const start = S.source?.kind === "rekordbox" ? S.source.path.replace(/[\/\\][^\/\\]*$/, "") : "";
+  const f = await pick("Choose rekordbox's master.db", start, ".db");
+  if (f && await saveSetting({ rekordboxDb: f })) { toast("Opened " + f, "ok"); await loadLibrary(); openList("all"); }
+};
+$("#autoDb").onclick = async () => { if (await saveSetting({ rekordboxDb: "" })) { await loadLibrary(); openList("all"); } };
+$("#addFolder").onclick = async () => {
+  setBusy(+1);
+  try { const r = await api("addfolder", {}); toast(`Added ${r.added} track${r.added === 1 ? "" : "s"} to the library.`, "ok"); await loadLibrary(); openList("all"); }
+  catch (e) { toast(e.message, "err"); }
+  finally { setBusy(-1); }
+};
+$("#saveToken").onclick = async () => {
+  const v = $("#scToken").value.trim();
+  if (!v) return;
+  if (await saveSetting({ scToken: v })) { $("#scToken").value = ""; toast("SoundCloud login saved.", "ok"); }
+};
+$("#clearToken").onclick = async () => { if (await saveSetting({ scToken: "" })) toast("SoundCloud login removed."); };
+
+// Folder/file picker backed by /api/browse (browsers can't reveal real paths).
+function pick(title, start, ext) {
+  return new Promise(resolve => {
+    const d = $("#picker");
+    let cur = null, selFile = null, settled = false;
+    const finish = v => { if (!settled) { settled = true; resolve(v); } };
+    $("#pickTitle").textContent = title;
+    $("#pickOk").textContent = ext ? "Use this file" : "Use this folder";
+    const sep = p => p.includes("\\") ? "\\" : "/";
+    async function go(dir, dirn = 1) {
+      try {
+        const l = await api("browse?dir=" + encodeURIComponent(dir || "") + (ext ? "&ext=" + ext : ""));
+        cur = l.path; selFile = null;
+        $("#pickOk").disabled = !!ext;
+        const items = (l.parent ? [`<li data-d="${esc(l.parent)}">↩ ..</li>`] : [])
+          .concat(l.dirs.map(n => `<li data-d="${esc(l.path.replace(/[\/\\]$/, "") + sep(l.path) + n)}">📁 ${esc(n)}</li>`))
+          .concat((l.files || []).map(n => `<li data-f="${esc(l.path.replace(/[\/\\]$/, "") + sep(l.path) + n)}">📄 ${esc(n)}</li>`));
+        await smoothHeight(d, () => {
+          $("#pickPath").textContent = l.path;
+          $("#pickRoots").innerHTML = l.roots.map(r => `<button data-d="${esc(r)}">${esc(r.split(/[\/\\]/).filter(Boolean).pop() || r)}</button>`).join("");
+          $("#pickList").innerHTML = items.join("") || `<li class="muted">Empty folder</li>`;
+          $$("#pickList li").slice(0, 18).forEach((li, i) => anim(li, [{ opacity: 0, transform: `translateX(${dirn * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 420, delay: i * 18 }));
+        });
+      } catch (e) { toast(e.message, "err"); }
+    }
+    d.onclick = e => {
+      const el = e.target.closest("[data-d],[data-f]");
+      if (!el) return;
+      if (el.dataset.d) go(el.dataset.d, el.textContent.startsWith("↩") ? -1 : 1);
+      else { selFile = el.dataset.f; $$("#pickList li").forEach(li => li.classList.toggle("sel", li === el)); $("#pickOk").disabled = false; }
+    };
+    d.onDismiss = () => finish(null);
+    $("#pickCancel").onclick = () => { closeDlg(d); finish(null); };
+    $("#pickOk").onclick = () => { closeDlg(d); finish(ext ? selFile : cur); };
+    $("#pickList").innerHTML = ""; $("#pickRoots").innerHTML = ""; $("#pickPath").textContent = "";
+    openDlg(d);
+    go(start);
+  });
+}
+
+// ---------- boot ----------
+(async () => {
+  measureHeader();
+  try { await refresh(); } catch (e) { toast(e.message, "err"); return; }
+  const tab = store.get("tab", "library");
+  selectTab(!S.source ? "settings" : TABS.includes(tab) ? tab : "library");
+  // Arrive gently: header items, then the page.
+  rise([$(".brand"), $("#nav"), $(".libstatus")], { gap: 70, dist: -6 });
+  rise(curTab === "library" ? [$(".side"), $(".libmain")] : $(`[data-panel="${curTab}"]`).children, { gap: 90 });
+  anim($("#player"), [{ transform: "translateY(100%)" }, { transform: "none" }], { duration: 700, delay: 200 });
+  if (!S.source) toast(S.sourceErr || "No library found.", "err");
+  else if (!S.tracks && !S.scanning) scan();
+  if (!S.musicDir) toast("Choose a download folder in Settings to import from SoundCloud.");
+})();
+</script>
+</body>
+</html>
