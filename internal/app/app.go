@@ -41,6 +41,8 @@ type Config struct {
 	QuitOnClose bool `json:"quitOnClose,omitempty"`
 	// OpenAtLogin starts SuperSync (in the background) when you log in.
 	OpenAtLogin bool `json:"openAtLogin,omitempty"`
+	// NotDuplicates: pairs of files the user said aren't duplicates.
+	NotDuplicates []string `json:"notDuplicates,omitempty"`
 	// Decisions records the user's answers for uncertain matches:
 	// "sc:<track id>" -> absolute path of the owned file, or "none".
 	Decisions map[string]string `json:"decisions,omitempty"`
@@ -321,7 +323,7 @@ func (a *App) Duplicates() ([]*analyze.Group, error) {
 	if err != nil {
 		return nil, err
 	}
-	return analyze.FindDuplicates(lib, a.Col), nil
+	return a.duplicates(lib), nil
 }
 
 func (a *App) Upgrades() ([]*analyze.Upgrade, error) {
@@ -329,7 +331,7 @@ func (a *App) Upgrades() ([]*analyze.Upgrade, error) {
 	if err != nil {
 		return nil, err
 	}
-	return analyze.FindUpgrades(lib, analyze.FindDuplicates(lib, a.Col), a.Cfg.MinKbps), nil
+	return analyze.FindUpgrades(lib, a.duplicates(lib), a.Cfg.MinKbps), nil
 }
 
 func (a *App) quarantineDir() (string, error) {

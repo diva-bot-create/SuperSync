@@ -503,6 +503,16 @@ func (s *server) routes(mux *http.ServeMux) {
 		err := a.WithRekordboxClosed(req.Restart, func() (err error) { res, err = a.CleanupDuplicates(req.Groups); return })
 		reply(w, res, err)
 	})
+	mux.HandleFunc("POST /api/dupes/reject", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Paths []string `json:"paths"`
+			Undo  bool     `json:"undo"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		reply(w, map[string]bool{"ok": true}, a.RejectDuplicates(req.Paths, req.Undo))
+	})
 	mux.HandleFunc("POST /api/dupes/undo-cleanup", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Restart bool `json:"restart"`

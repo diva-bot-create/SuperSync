@@ -264,6 +264,7 @@ button.tier { font: inherit; border: 0; cursor: pointer; }
 .tier.dl { position: relative; overflow: hidden; min-width: 46px; text-align: center; }
 .tier.dl i { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, currentColor 24%, transparent); transition: width .45s var(--ease, ease); }
 .relink { font-size: 12px; white-space: nowrap; }
+.notdup { margin-right: 12px; }
 .tier.stream { color: #d59cff; background: color-mix(in srgb, #b46cff 16%, transparent); }
 .warnish { color: var(--need); cursor: help; }
 .tier.noaccess { color: var(--need); background: var(--panel-2); }
@@ -2471,6 +2472,7 @@ function menuFor(t, e) {
         c && { icon: "⎘", label: "Copy file path", run: () => copyText(c.path, "the file path") },
         "-",
         { icon: "✓", label: "Clean up this duplicate…", run: () => confirmCleanup([g]) },
+        { icon: "≠", label: "Not duplicates (stop showing these)", run: () => notDuplicates(g) },
         needsCues(g) && { icon: "◆", label: "Preview cue carry-over", run: () => carryCues([g]) }];
     }
   }
@@ -2731,7 +2733,7 @@ function groupHtml(g) {
   const n = extras(g).length;
   return `<h3><span class="gname">${esc(trackName(k))}</span>
       ${g.lengthsDiffer ? `<span class="badge maybe" style="text-transform:none">different lengths</span>` : ""}
-      <span class="grow"></span><button class="small" data-move="${g.id}">Clean up</button></h3>
+      <span class="grow"></span><button class="link notdup" data-notdup="${g.id}" title="These aren't the same track: stop showing them as duplicates">Not duplicates</button><button class="small" data-move="${g.id}">Clean up</button></h3>
     ${g.copies.map(c => `<label class="copy ${c.path === keep[g.id] ? "" : "drop"}">
       <input type="radio" name="k-${g.id}" value="${esc(c.path)}" ${c.path === keep[g.id] ? "checked" : ""}>
       <span>${qBadge({ quality: qLabel(c), lossless: c.lossless, inRekordbox: c.inRekordbox, cues: c.cues, upscaled: c.upscaled, trueKbps: c.trueKbps })}</span>
@@ -2853,9 +2855,25 @@ $("#groups").addEventListener("click", e => {
   if (!b) return;
   if (b.dataset.reveal) { e.preventDefault(); api("reveal", { path: b.dataset.reveal }).catch(err => toast(err.message, "err")); }
   if (b.dataset.move) confirmCleanup([groups.find(g => g.id === b.dataset.move)]);
+  if (b.dataset.notdup) notDuplicates(groups.find(g => g.id === b.dataset.notdup));
   if (b.dataset.cues) { e.preventDefault(); carryCues([groups.find(g => g.id === b.dataset.cues)]); }
 });
 $("#moveAll").onclick = () => confirmCleanup(groups.filter(g => !g.lengthsDiffer));
+
+// "These aren't duplicates": hide the group and remember it (undoable).
+async function notDuplicates(g) {
+  if (!g) return;
+  const paths = g.copies.map(c => c.path);
+  try { await api("dupes/reject", { paths }); } catch (e) { toast(e.message, "err"); return; }
+  const el = $(`[data-k="g${g.id}"]`);
+  if (el) await collapse(el);
+  groups = groups.filter(x => x !== g);
+  renderDupes();
+  toast(`Won't show “${trackName(g.copies[0])}” as a duplicate again.`, "ok", { label: "Undo", run: async () => {
+    try { await api("dupes/reject", { paths, undo: true }); dupesLoaded = false; loaders.dupes(); }
+    catch (e) { toast(e.message, "err"); }
+  } });
+}
 // Confirm, then fold the groups' extras into their keepers. If rekordbox is
 // open, the server says so and withRekordbox asks before quitting it.
 function confirmCleanup(gs) {
