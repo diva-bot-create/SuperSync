@@ -1,11 +1,13 @@
 package app
 
 import (
+	"golang.org/x/text/unicode/norm"
 	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -63,16 +65,18 @@ func (a *App) resolveCloudFiles() {
 			libs = append(libs, l)
 		}
 	}
-	byName := map[string][]*library.Track{}
+	idx := &cloudIndex{byName: map[string][]*library.Track{}, bySize: map[string][]*library.Track{}, libs: libs}
 	for _, l := range libs {
 		for _, t := range l.Tracks {
 			n := strings.ToLower(filepath.Base(t.Path))
-			byName[n] = append(byName[n], t)
+			idx.byName[n] = append(idx.byName[n], t)
+			idx.bySize[sizeKey(t.Size, t.Path)] = append(idx.bySize[sizeKey(t.Size, t.Path)], t)
+			idx.all = append(idx.all, t)
 		}
 	}
 	found := map[string]string{}
 	for _, t := range need {
-		found[t.StoredPath] = findCloudFile(t, byName, libs)
+		found[t.StoredPath] = idx.find(t)
 	}
 	a.mu.Lock()
 	if a.cloudFound == nil {
@@ -112,15 +116,34 @@ func cloudSearchDirs(musicDir string) []string {
 	return out
 }
 
-func findCloudFile(t *rbdb.Track, byName map[string][]*library.Track, libs []*library.Library) string {
+type cloudIndex struct {
+	byName, bySize map[string][]*library.Track
+	all            []*library.Track
+	libs           []*library.Library
+}
+
+func sizeKey(size int64, p string) string {
+	return strings.ToLower(filepath.Ext(p)) + ":" + strconv.FormatInt(size, 10)
+}
+
+// nameKey compares file names the way rekordbox's cloud names are made:
+// lowercased, in one Unicode form, without the extension.
+func nameKey(p string) string {
+	b := strings.TrimSuffix(path.Base(filepath.ToSlash(p)), path.Ext(p))
+	return strings.TrimSpace(norm.NFC.String(strings.ToLower(b)))
+}
+
+func (x *cloudIndex) find(t *rbdb.Track) string {
 	rel := strings.ToLower(contentsPrefix.ReplaceAllString(t.StoredPath, ""))
-	cands := byName[path.Base(rel)]
-	// Same layout under some folder, then the same name (size breaks ties).
+	ext := strings.ToLower(path.Ext(rel))
+	cands := x.byName[path.Base(rel)]
+	// 1. The same layout under some folder.
 	for _, c := range cands {
 		if strings.HasSuffix(strings.ToLower(filepath.ToSlash(c.Path)), "/"+rel) {
 			return c.Path
 		}
 	}
+	// 2. The same name (the size breaks ties).
 	if len(cands) == 1 {
 		return cands[0].Path
 	}
@@ -129,7 +152,35 @@ func findCloudFile(t *rbdb.Track, byName map[string][]*library.Track, libs []*li
 			return c.Path
 		}
 	}
-	// The cloud name may be cut short: match on the track's tags and length.
+	// 3. The very same file: exactly the size rekordbox recorded, same type.
+	if t.FileSize > 0 {
+		if same := x.bySize[ext+":"+strconv.FormatInt(t.FileSize, 10)]; len(same) == 1 {
+			return same[0].Path
+		}
+	}
+	// 4. rekordbox cuts cloud names short: a file whose name starts with it.
+	cut := nameKey(rel)
+	if len(cut) >= 12 {
+		var hits []*library.Track
+		for _, c := range x.all {
+			if strings.ToLower(filepath.Ext(c.Path)) == ext && strings.HasPrefix(nameKey(c.Path), cut) {
+				hits = append(hits, c)
+			}
+		}
+		if len(hits) == 1 {
+			return hits[0].Path
+		}
+		for _, h := range hits {
+			if t.FileSize > 0 && h.Size == t.FileSize {
+				return h.Path
+			}
+		}
+	}
+	// 5. The track's tags and length.
+	return findByTags(t, x.libs)
+}
+
+func findByTags(t *rbdb.Track, libs []*library.Library) string {
 	keys := match.Parse(t.Artist, t.Title)
 	best, bestScore := "", 0.0
 	for _, l := range libs {
