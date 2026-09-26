@@ -382,6 +382,15 @@ func (s *server) routes(mux *http.ServeMux) {
 		if len(samples) > 0 {
 			b.WriteString("Examples:\n" + strings.Join(samples, "\n") + "\n")
 		}
+		// For a Cloud Library Sync track: what rekordbox records about it.
+		if ci, ok := a.Src.(interface{ CloudInfo(id string) string }); ok {
+			for _, t := range a.Src.Tracks() {
+				if _, err := os.Stat(t.Path); t.Cloud && err != nil {
+					b.WriteString("Cloud track " + t.ID + ":\n" + ci.CloudInfo(t.ID))
+					break
+				}
+			}
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte(b.String()))
 	})

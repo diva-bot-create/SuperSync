@@ -362,6 +362,18 @@ func (s *rbSource) Relocate(moves map[string]string) error {
 	return s.load()
 }
 
+// CloudInfo reports what rekordbox records about a Cloud Library Sync track
+// (for diagnostics).
+func (s *rbSource) CloudInfo(id string) string {
+	s.mu.RLock()
+	db := s.db
+	s.mu.RUnlock()
+	if db == nil {
+		return ""
+	}
+	return db.CloudInfo(id)
+}
+
 func (s *rbSource) Restore(backup string) error {
 	if err := rbdb.Restore(s.loc, backup); err != nil {
 		return err

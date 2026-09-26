@@ -218,11 +218,20 @@ func resolveCloud(ts []*Track) {
 	}
 	if len(roots) == 0 {
 		// Nothing to go on: try where Dropbox and Google Drive usually keep
-		// rekordbox's cloud folder.
+		// rekordbox's cloud folder, then look for the "contents_…" folders.
 		for _, r := range cloudFolderGuesses() {
 			if exists(r) {
 				roots[filepath.ToSlash(r)] = true
 			}
+		}
+		names := map[string]bool{}
+		for _, t := range ts {
+			if m := contentsRe.FindStringSubmatch(t.StoredPath); t.Cloud && m != nil && !exists(t.Path) {
+				names[m[1]] = true
+			}
+		}
+		for _, dir := range contentsRoots(names) {
+			roots[filepath.ToSlash(dir)] = true
 		}
 		if len(roots) == 0 {
 			return
