@@ -132,6 +132,7 @@ type DB struct {
 	plain    string
 	LoadedAt time.Time
 	modTime  time.Time
+	share    string
 }
 
 // Open decrypts the library into a private temporary file and opens it.

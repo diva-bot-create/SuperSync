@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"supersync/internal/anlz"
 	"supersync/internal/rbdb"
 	"supersync/internal/rekordbox"
 )
@@ -26,6 +27,8 @@ type Source interface {
 	Playlists() []*rbdb.Playlist
 	PlaylistTrackIDs(id string) []string
 	Cues(id string) []rbdb.Cue
+	// Analysis is the beatgrid (and rekordbox's own waveform) for a track, or nil.
+	Analysis(id string) *anlz.Analysis
 	TrackPlaylists() map[string][]string
 	// Apply makes the changes; for rekordbox it fails with rbdb.ErrRunning while rekordbox is open.
 	Apply(c *Change) (*Applied, error)
@@ -150,6 +153,38 @@ func (s *rbSource) Cues(id string) []rbdb.Cue {
 	c, _ := s.db.Cues(id)
 	return c
 }
+func (s *rbSource) Analysis(id string) *anlz.Analysis {
+	t := s.Track(id)
+	if t == nil || t.Analysis == "" {
+		return nil
+	}
+	return readAnalysis(t.Analysis)
+}
+
+// Analysis files are read once per change (they're rewritten when rekordbox re-analyses).
+var anlzCache sync.Map // path -> cachedAnalysis
+
+type cachedAnalysis struct {
+	mod time.Time
+	a   *anlz.Analysis
+}
+
+func readAnalysis(path string) *anlz.Analysis {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if c, ok := anlzCache.Load(path); ok && c.(cachedAnalysis).mod.Equal(st.ModTime()) {
+		return c.(cachedAnalysis).a
+	}
+	a, err := anlz.Read(path)
+	if err != nil {
+		return nil
+	}
+	anlzCache.Store(path, cachedAnalysis{st.ModTime(), a})
+	return a
+}
+
 func (s *rbSource) Refresh() bool {
 	s.mu.RLock()
 	changed := s.db.Changed()
@@ -384,6 +419,36 @@ func (s *xmlSource) Cues(id string) []rbdb.Cue {
 	}
 	return out
 }
+
+// Analysis builds a beatgrid from the XML's TEMPO markers.
+func (s *xmlSource) Analysis(id string) *anlz.Analysis {
+	s.mu.RLock()
+	t := s.lib.Track(id)
+	s.mu.RUnlock()
+	if t == nil || len(t.Tempos) == 0 {
+		return nil
+	}
+	end, _ := strconv.ParseFloat(t.Get("TotalTime"), 64)
+	a := &anlz.Analysis{}
+	for i, m := range t.Tempos {
+		start, _ := strconv.ParseFloat(m.Get("Inizio"), 64)
+		bpm, _ := strconv.ParseFloat(m.Get("Bpm"), 64)
+		bar, _ := strconv.Atoi(m.Get("Battito"))
+		stop := end
+		if i+1 < len(t.Tempos) {
+			stop, _ = strconv.ParseFloat(t.Tempos[i+1].Get("Inizio"), 64)
+		}
+		if bpm <= 0 || bar < 1 {
+			continue
+		}
+		for at := start; at < stop && len(a.Grid) < 20000; at += 60 / bpm {
+			a.Grid = append(a.Grid, anlz.Beat{Ms: int(math.Round(at * 1000)), Bar: bar, BPM: bpm})
+			bar = bar%4 + 1
+		}
+	}
+	return a
+}
+
 func (s *xmlSource) Refresh() bool {
 	s.mu.RLock()
 	path, mod := s.lib.Path, s.mod

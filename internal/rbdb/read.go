@@ -1,7 +1,10 @@
 package rbdb
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Track is one entry of the rekordbox collection (djmdContent).
@@ -30,6 +33,8 @@ type Track struct {
 	Analysed   bool    `json:"analysed"`
 	UUID       string  `json:"uuid"`
 	Cues       int     `json:"cues"`
+	// Analysis is rekordbox's analysis file (ANLZ0000.DAT) for the track, if analysed.
+	Analysis string `json:"-"`
 }
 
 // Playlist is a playlist, folder, or smart playlist.
@@ -64,7 +69,7 @@ func (d *DB) Tracks() ([]*Track, error) {
 		       IFNULL(c.BPM,0), IFNULL(c.Length,0), IFNULL(c.BitRate,0), IFNULL(c.BitDepth,0),
 		       IFNULL(c.SampleRate,0), IFNULL(c.FileType,0), IFNULL(c.FileSize,0), IFNULL(c.Rating,0),
 		       IFNULL(col.Commnt,''), IFNULL(c.DJPlayCount,0), IFNULL(c.StockDate, IFNULL(c.DateCreated,'')),
-		       IFNULL(c.ReleaseYear,0), IFNULL(c.Analysed,0), IFNULL(c.UUID,''),
+		       IFNULL(c.ReleaseYear,0), IFNULL(c.Analysed,0), IFNULL(c.UUID,''), IFNULL(c.AnalysisDataPath,''),
 		       (SELECT COUNT(*) FROM djmdCue q WHERE q.ContentID = c.ID AND IFNULL(q.rb_local_deleted,0) = 0)
 		FROM djmdContent c
 		LEFT JOIN djmdArtist a ON a.ID = c.ArtistID
@@ -85,12 +90,15 @@ func (d *DB) Tracks() ([]*Track, error) {
 		var bpm, analysed, rating int
 		if err := rows.Scan(&t.ID, &t.Path, &t.Title, &t.Artist, &t.Album, &t.Genre, &t.Key, &t.Label,
 			&t.Comment, &bpm, &t.Length, &t.BitRate, &t.BitDepth, &t.SampleRate, &t.FileType, &t.FileSize,
-			&rating, &t.Color, &t.PlayCount, &t.Added, &t.Year, &analysed, &t.UUID, &t.Cues); err != nil {
+			&rating, &t.Color, &t.PlayCount, &t.Added, &t.Year, &analysed, &t.UUID, &t.Analysis, &t.Cues); err != nil {
 			return nil, err
 		}
 		t.BPM = float64(bpm) / 100
 		t.Rating = stars(rating)
 		t.Analysed = analysed != 0
+		if t.Analysis != "" {
+			t.Analysis = filepath.Join(d.shareDir(), filepath.FromSlash(strings.TrimLeft(t.Analysis, "/\\")))
+		}
 		if len(t.Added) > 10 {
 			t.Added = t.Added[:10]
 		}
@@ -255,4 +263,21 @@ func (d *DB) TrackPlaylists() (map[string][]string, error) {
 		}
 	}
 	return out, rows.Err()
+}
+
+// shareDir is where rekordbox keeps analysis files: the path it recorded in
+// agentRegistry, or "share" next to the database.
+func (d *DB) shareDir() string {
+	if d.share != "" {
+		return d.share
+	}
+	var p string
+	d.SQL.QueryRow(`SELECT IFNULL(str_1,'') FROM agentRegistry WHERE registry_id='SyncAnalysisDataRootPath'`).Scan(&p)
+	d.share = filepath.Join(d.Loc.Dir, "share")
+	if p != "" {
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			d.share = p
+		}
+	}
+	return d.share
 }

@@ -275,6 +275,10 @@ button.tier[aria-pressed=true] { border-color: currentColor; }
 .dartist { color: var(--muted); margin-top: 2px; }
 .dwave { position: relative; margin: 18px 0 8px; height: 96px; border-radius: 12px; background: var(--panel-2); overflow: hidden; cursor: pointer; }
 .dwave canvas { width: 100%; height: 100%; display: block; }
+.dzoom { position: relative; height: 110px; border-radius: 12px; background: #0b0b0c; overflow: hidden; cursor: grab; margin-bottom: 6px; box-shadow: inset 0 0 0 1px var(--line); }
+.dzoom canvas { width: 100%; height: 100%; display: block; }
+.dzoom .zhint { position: absolute; right: 8px; bottom: 6px; font-size: 10.5px; color: var(--muted); pointer-events: none; font-family: var(--mono); }
+.gridinfo { font-size: 12px; color: var(--muted); margin: 2px 0 8px; font-variant-numeric: tabular-nums; }
 .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0; }
 .fact { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; }
 .fact .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
@@ -1287,7 +1291,7 @@ async function openDetail(r) {
   let info;
   try { info = await api("track/" + encodeURIComponent(r.id)); } catch (e) { toast(e.message, "err"); return; }
   if (seq !== detailSeq) return;
-  detail = { row: r, track: info.track, cues: info.cues || [], playlists: info.playlists || [], wave: null };
+  detail = { row: r, track: info.track, cues: info.cues || [], grid: info.grid || [], playlists: info.playlists || [], wave: null, center: firstFocus(info), span: 8 };
   renderDetail(detail, wasOpen);
   const wf = await getWave(r.id);
   if (seq !== detailSeq || !wf) return;
@@ -1321,8 +1325,10 @@ function renderDetail(d, wasOpen) {
     const stars = t.rating ? "★".repeat(t.rating) : "–";
     h += `<div class="dtitle">${esc(t.title)}</div><div class="dartist">${esc(t.artist)}${t.album ? " · " + esc(t.album) : ""}</div>
       <div class="dwave" id="dWave" title="Click to play from here"><canvas></canvas></div>
+      <div class="dzoom" id="dZoom" title="Scroll to move, ⌘/Ctrl + scroll to zoom, click to play from here"><canvas></canvas><span class="zhint" id="zHint"></span></div>
+      ${d.grid.length ? `<div class="gridinfo">Beatgrid from rekordbox · ${gridSummary(d.grid)}</div>` : `<div class="gridinfo">${t.format && d.row.id ? "No beatgrid yet: rekordbox adds one when it analyses the track." : ""}</div>`}
       <div class="facts">
-        <div class="fact"><div class="k">BPM</div><div class="v">${t.bpm ? t.bpm.toFixed(2).replace(/\.?0+$/, "") : "–"}</div></div>
+        <div class="fact"><div class="k">BPM</div><div class="v">${t.bpm ? t.bpm.toFixed(2).replace(/\.?0+$/, "") : d.grid.length ? (d.grid[0][2] / 100).toFixed(2).replace(/\.?0+$/, "") : "–"}</div></div>
         <div class="fact"><div class="k">Key</div><div class="v">${esc(t.key || "–")}</div></div>
         <div class="fact"><div class="k">Time</div><div class="v">${fmtDur(t.length) || "–"}</div></div>
         <div class="fact"><div class="k">Quality</div><div class="v">${tierBadge(t)}</div></div>
@@ -1346,7 +1352,28 @@ function renderDetail(d, wasOpen) {
     const rect = e.currentTarget.getBoundingClientRect(), f = (e.clientX - rect.left) / rect.width;
     playTrack(r, f * (d.wave?.secs || t.length) * 1000);
   });
-  body.querySelectorAll("[data-cue]").forEach(b => b.onclick = () => playTrack(r, Number(b.dataset.cue)));
+  body.querySelectorAll("[data-cue]").forEach(b => b.onclick = () => { if (detail) detail.center = Number(b.dataset.cue) / 1000; playTrack(r, Number(b.dataset.cue)); });
+  const z = $("#dZoom");
+  if (z) {
+    z.addEventListener("wheel", e => {
+      e.preventDefault();
+      if (!detail) return;
+      if (e.ctrlKey || e.metaKey) detail.span = Math.min(64, Math.max(2, detail.span * Math.exp(e.deltaY * 0.004)));
+      else {
+        const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        const t0 = zoomCenter() + dx / z.clientWidth * detail.span;
+        detail.center = Math.max(0, Math.min(detail.track.length, t0));
+        if (nowPlaying?.id === detail.track.id && !au.paused) au.currentTime = detail.center;
+      }
+      drawAll();
+    }, { passive: false });
+    z.addEventListener("click", e => {
+      const rect = z.getBoundingClientRect();
+      const at = zoomCenter() + ((e.clientX - rect.left) / rect.width - 0.5) * detail.span;
+      detail.center = Math.max(0, at);
+      playTrack(r, detail.center * 1000);
+    });
+  }
   drawAll();
 }
 
@@ -1359,12 +1386,12 @@ async function getWave(id) {
     if (!r.ok) return null;
     const w = await r.json();
     // Go sends byte arrays as base64 (compact); unpack them.
-    for (const k of ["peak", "low", "mid", "high"]) w[k] = Uint8Array.from(atob(w[k] || ""), c => c.charCodeAt(0));
+    for (const k of ["peak", "low", "mid", "high", "dpeak", "dlow", "dmid", "dhigh", "rb"]) w[k] = Uint8Array.from(atob(w[k] || ""), c => c.charCodeAt(0));
     waves.set(id, w);
     return w;
   } catch { return null; }
 }
-function drawWave(canvas, wf, { cues = [], progress = -1, secs = 0 } = {}) {
+function drawWave(canvas, wf, { cues = [], grid = [], progress = -1, secs = 0 } = {}) {
   if (!canvas) return;
   const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
   if (!W || !H) return;
@@ -1387,6 +1414,13 @@ function drawWave(canvas, wf, { cues = [], progress = -1, secs = 0 } = {}) {
     }
   }
   if (!dur) return;
+  // Bar lines from the beatgrid; every 4 bars when bars would be too close together.
+  if (grid.length) {
+    const downs = grid.filter(b => b[1] === 1);
+    const every = downs.length && W / downs.length < 5 ? 4 : 1;
+    g.fillStyle = "rgba(255,255,255,.10)";
+    downs.forEach((b, i) => { if (i % every === 0) g.fillRect(Math.round(b[0] / 1000 / dur * W), 0, 1, H); });
+  }
   for (const c of cues) {
     const x = c.inMs / 1000 / dur * W, col = cueColor(c);
     if (c.outMs > c.inMs) {
@@ -1408,9 +1442,88 @@ function drawWave(canvas, wf, { cues = [], progress = -1, secs = 0 } = {}) {
     g.fillRect(x - 1, 0, 2, H);
   }
 }
+function gridSummary(g) {
+  const bpms = [...new Set(g.map(b => b[2]))];
+  const first = g.find(b => b[1] === 1) || g[0];
+  return `${g.length.toLocaleString()} beats · ${bpms.length > 1 ? (Math.min(...bpms) / 100).toFixed(1) + "–" + (Math.max(...bpms) / 100).toFixed(1) + " BPM (tempo changes)" : (bpms[0] / 100).toFixed(2).replace(/\.?0+$/, "") + " BPM"} · first downbeat ${fmtTime(first[0])}.${String(first[0] % 1000).padStart(3, "0")}`;
+}
+// Where the zoomed view starts: the first hot cue, else the first downbeat.
+function firstFocus(info) {
+  const hot = (info.cues || []).filter(c => c.hot).sort((a, b) => a.inMs - b.inMs)[0];
+  if (hot) return hot.inMs / 1000;
+  const down = (info.grid || []).find(b => b[1] === 1);
+  return down ? down[0] / 1000 : 0;
+}
+function zoomCenter() {
+  if (detail && nowPlaying?.id === detail.track?.id && (!au.paused || au.currentTime > 0)) return au.currentTime;
+  return detail?.center || 0;
+}
+// A rekordbox-style zoomed waveform: rekordbox's own colour waveform when the
+// track is analysed (else ours), beats as thin lines, downbeats red, cues flagged.
+function drawZoom(canvas, d) {
+  if (!canvas || !d?.track) return;
+  const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  if (!W || !H) return;
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const span = d.span, c = zoomCenter(), t0 = c - span / 2, mid = H / 2;
+  const x = t => (t - t0) / span * W;
+  const wf = d.wave;
+  if (wf?.rb?.length) {
+    const rate = wf.rbRate, n = wf.rb.length / 2;
+    for (let px = 0; px < W; px++) {
+      const i = Math.floor((t0 + px / W * span) * rate);
+      if (i < 0 || i >= n) continue;
+      const v = wf.rb[2 * i] << 8 | wf.rb[2 * i + 1];
+      const h = (v >> 2 & 31) / 31 * (mid - 3);
+      g.fillStyle = `rgb(${(v >> 13 & 7) * 36},${(v >> 10 & 7) * 36},${(v >> 7 & 7) * 36})`;
+      g.fillRect(px, mid - h, 1, h * 2);
+    }
+  } else if (wf?.dpeak?.length) {
+    const rate = wf.drate, n = wf.dpeak.length;
+    for (let px = 0; px < W; px++) {
+      const i = Math.floor((t0 + px / W * span) * rate);
+      if (i < 0 || i >= n) continue;
+      const amp = wf.dpeak[i] / 255 * (mid - 3), lo = wf.dlow[i] / 255, mi = wf.dmid[i] / 255, hi = wf.dhigh[i] / 255;
+      g.fillStyle = `rgb(${30 * lo + 255 * mi + 245 * hi | 0},${110 * lo + 150 * mi + 245 * hi | 0},${255 * lo + 30 * mi + 255 * hi | 0})`;
+      g.fillRect(px, mid - amp, 1, amp * 2);
+    }
+  }
+  // Beatgrid
+  for (const [ms, bar] of d.grid) {
+    const t = ms / 1000;
+    if (t < t0 - 1 || t > t0 + span + 1) continue;
+    const bx = Math.round(x(t)) + 0.5;
+    if (bar === 1) { g.fillStyle = "rgba(255,59,48,.85)"; g.fillRect(bx - 0.75, 0, 1.5, H); g.fillRect(bx - 3, 0, 6, 3); }
+    else { g.fillStyle = "rgba(255,255,255,.22)"; g.fillRect(bx - 0.5, 0, 1, H); g.fillRect(bx - 1.5, 0, 3, 2); }
+  }
+  // Cues and loops
+  for (const cue of d.cues) {
+    const cx = x(cue.inMs / 1000), col = cueColor(cue);
+    if (cue.outMs > cue.inMs) { g.fillStyle = col + "30"; g.fillRect(cx, 0, (cue.outMs - cue.inMs) / 1000 / span * W, H); }
+    if (cx < -20 || cx > W + 20) continue;
+    g.fillStyle = col;
+    g.fillRect(cx - 1, 0, 2, H);
+    if (cue.hot) {
+      g.fillRect(cx, H - 16, 16, 16);
+      g.fillStyle = "#000"; g.font = "bold 10px system-ui"; g.fillText("ABCDEFGH"[cue.hot - 1] || "", cx + 4, H - 4);
+    } else { g.beginPath(); g.moveTo(cx - 6, H); g.lineTo(cx + 6, H); g.lineTo(cx, H - 9); g.closePath(); g.fill(); }
+  }
+  // Playhead
+  g.fillStyle = "#fff";
+  g.fillRect(W / 2 - 1, 0, 2, H);
+  const hint = $("#zHint");
+  if (hint) hint.textContent = `${fmtDur(Math.max(0, c)) || "0:00"} · ${span.toFixed(0)}s`;
+}
+
 function drawAll() {
   const t = au.currentTime;
-  if (detail?.track) drawWave($("#dWave canvas"), detail.wave, { cues: detail.cues, progress: nowPlaying?.id === detail.track.id ? t : -1, secs: detail.track.length });
+  if (detail?.track) {
+    drawWave($("#dWave canvas"), detail.wave, { cues: detail.cues, grid: detail.grid, progress: nowPlaying?.id === detail.track.id ? t : -1, secs: detail.track.length });
+    drawZoom($("#dZoom canvas"), detail);
+  }
   if (nowPlaying) drawWave($("#pWave"), nowPlaying.wave, { cues: nowPlaying.cues, progress: t, secs: nowPlaying.length });
 }
 

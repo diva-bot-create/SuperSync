@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"supersync/internal/analyze"
+	"supersync/internal/anlz"
 	"supersync/internal/app"
 	"supersync/internal/audio"
 	"supersync/internal/rbdb"
@@ -110,7 +111,14 @@ func (s *server) routes(mux *http.ServeMux) {
 			return
 		}
 		row := s.row(t)
-		reply(w, map[string]any{"track": row, "cues": a.Src.Cues(t.ID), "playlists": a.Src.TrackPlaylists()[t.ID]}, nil)
+		// The beatgrid as [ms, beat-in-bar, BPM×100] triples (compact for long tracks).
+		grid := [][3]int{}
+		if an := a.Src.Analysis(t.ID); an != nil {
+			for _, b := range an.Grid {
+				grid = append(grid, [3]int{b.Ms, b.Bar, int(b.BPM*100 + 0.5)})
+			}
+		}
+		reply(w, map[string]any{"track": row, "cues": a.Src.Cues(t.ID), "grid": grid, "playlists": a.Src.TrackPlaylists()[t.ID]}, nil)
 	})
 
 	mux.HandleFunc("GET /api/audio/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -129,10 +137,25 @@ func (s *server) routes(mux *http.ServeMux) {
 			return
 		}
 		wf, err := audio.ComputeWaveform(t.Path, 900, filepath.Join(app.DataDir(), "waveforms"))
-		if err == nil {
-			w.Header().Set("Cache-Control", "private, max-age=86400")
+		if err != nil {
+			reply(w, nil, err)
+			return
 		}
-		reply(w, wf, err)
+		out := struct {
+			*audio.Waveform
+			DRate  int    `json:"drate"`
+			RB     []byte `json:"rb,omitempty"` // rekordbox's colour waveform, 2 bytes per column (big-endian)
+			RBRate int    `json:"rbRate,omitempty"`
+		}{Waveform: wf, DRate: audio.DetailRate}
+		if an := a.Src.Analysis(t.ID); an != nil && len(an.Detail) > 0 {
+			out.RB = make([]byte, 2*len(an.Detail))
+			for i, v := range an.Detail {
+				out.RB[2*i], out.RB[2*i+1] = byte(v>>8), byte(v)
+			}
+			out.RBRate = anlz.DetailRate
+		}
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		reply(w, out, nil)
 	})
 
 	// ---- SoundCloud import ----
