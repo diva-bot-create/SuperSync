@@ -406,6 +406,11 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   body::before, body::after, header::after { animation: none !important; }
 }
+#updOverlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(8,8,10,.82); backdrop-filter: blur(10px); }
+#updOverlay.hidden { display: none; }
+#updOverlay > div { display: grid; justify-items: center; gap: 10px; text-align: center; }
+#updOverlay .spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(255,255,255,.12); border-top-color: var(--accent); animation: updspin .9s linear infinite; }
+@keyframes updspin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -434,9 +439,11 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   <div class="libstatus">
     <span id="libText"></span>
     <div class="bar" id="scanBar"><i></i></div>
+    <button class="small primary hidden" id="updBtn"></button>
     <button class="small" id="rescan">Rescan</button>
   </div>
 </header>
+<div id="updOverlay" class="hidden"><div><div class="spin"></div><b id="updOverText">Updating SuperSync…</b><span class="muted" id="updOverSub">This takes a few seconds.</span></div></div>
 
 <main>
   <!-- LIBRARY -->
@@ -540,6 +547,16 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoApply" style="accent-color:var(--accent)"> Add waiting changes to rekordbox as soon as it's closed</label>
         <div class="muted" id="syncState" style="margin-top:8px;font-size:12.5px"></div>
         <div class="muted" style="margin-top:6px;font-size:12.5px">SuperSync never quits rekordbox on its own. While rekordbox is open, changes wait until you close it, or until you click <b>Restart rekordbox &amp; apply</b>.</div>
+      </div>
+      <div class="panel setting">
+        <h3>Updates</h3>
+        <div class="muted" id="updState"></div>
+        <div class="row" style="margin-top:12px">
+          <button id="updCheck">Check for updates</button>
+          <button class="primary hidden" id="updInstall"></button>
+          <a class="link hidden" id="updNotes" target="_blank" rel="noopener">What's new</a>
+        </div>
+        <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoUpdate" style="accent-color:var(--accent)"> Download new versions automatically</label>
       </div>
       <div class="panel setting">
         <h3>Quality bar</h3>
@@ -954,6 +971,7 @@ async function refresh() {
   undo.title = S.lastCleanup || "";
   $("#autoSync").value = String(S.autoSyncHours || 0);
   $("#autoApply").checked = !!S.autoApply;
+  paintUpdate();
   $("#syncState").textContent = (S.lastSync ? "Last synced " + new Date(S.lastSync).toLocaleString() + ". " : "") + (S.nextSync ? "Next " + new Date(S.nextSync).toLocaleString() + "." : "");
   renderPending();
   paintSyncLabels();
@@ -2012,6 +2030,61 @@ async function saveSetting(body) {
   try { await api("settings", body); await refresh(); return true; } catch (e) { toast(e.message, "err"); return false; }
 }
 $("#minKbps").onchange = async e => { await saveSetting({ minKbps: Number(e.target.value) }); upsLoaded = false; };
+function paintUpdate() {
+  const u = S.update || {}, ready = u.state === "ready";
+  const btn = $("#updBtn");
+  if (ready === btn.classList.contains("hidden")) {
+    btn.classList.toggle("hidden", !ready);
+    if (ready) anim(btn, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
+  }
+  btn.textContent = `Update to ${u.latest}`;
+  $("#updInstall").classList.toggle("hidden", !ready);
+  $("#updInstall").textContent = `Restart & update to ${u.latest}`;
+  const notes = $("#updNotes");
+  notes.classList.toggle("hidden", !u.url || !(ready || u.state === "error"));
+  if (u.url) notes.href = u.url;
+  $("#autoUpdate").checked = !!S.autoUpdate;
+  $("#updCheck").disabled = u.state === "checking" || u.state === "downloading" || u.state === "unsupported";
+  const msg = {
+    checking: "Checking for a new version…",
+    downloading: `Downloading ${u.latest}…`,
+    ready: `${u.latest} is downloaded and ready. SuperSync restarts to install it, which takes a few seconds.`,
+    current: u.message || "You have the latest version.",
+    error: u.message || "Couldn't check for updates.",
+    unsupported: "Automatic updates aren't available on this system.",
+  }[u.state] || (S.autoUpdate ? "SuperSync checks for new versions while it's open." : "Automatic updates are off.");
+  $("#updState").textContent = `You have SuperSync ${S.version}. ${msg}`;
+  if (u.state === "checking" || u.state === "downloading") { clearTimeout(paintUpdate.t); paintUpdate.t = setTimeout(refresh, 1500); }
+}
+function confirmUpdate() {
+  const u = S.update || {}, d = $("#confirm");
+  $("#confTitle").textContent = `Update SuperSync to ${u.latest}?`;
+  $("#confBody").innerHTML = `<p style="margin-top:0">SuperSync restarts to install the update, which takes a few seconds, and this page reloads by itself. Your library, playlists and settings aren't affected.</p>
+    ${u.notes ? `<div class="notes" style="white-space:pre-wrap;max-height:220px;overflow:auto;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px">${esc(u.notes)}</div>` : ""}`;
+  $("#confYes").textContent = "Restart & update";
+  openDlg(d);
+  $("#confNo").onclick = () => closeDlg(d);
+  $("#confYes").onclick = async () => {
+    await closeDlg(d);
+    try { await api("update/install", {}); } catch (e) { toast(e.message, "err"); return; }
+    const ov = $("#updOverlay");
+    ov.classList.remove("hidden");
+    anim(ov, [{ opacity: 0 }, { opacity: 1 }], { duration: 300 });
+    clearTimeout(pollTimer);
+    const want = u.latest, until = Date.now() + 45000;
+    await new Promise(r => setTimeout(r, 1200));
+    while (Date.now() < until) {
+      try { const st = await api("state"); if (st.version === want) { location.reload(); return; } } catch {}
+      await new Promise(r => setTimeout(r, 700));
+    }
+    $("#updOverText").textContent = "SuperSync didn't come back by itself";
+    $("#updOverSub").textContent = "Close its window and open SuperSync again; the update is installed.";
+  };
+}
+$("#updBtn").onclick = confirmUpdate;
+$("#updInstall").onclick = confirmUpdate;
+$("#updCheck").onclick = async () => { try { S = await api("update/check", {}); paintUpdate(); } catch (e) { toast(e.message, "err"); } };
+$("#autoUpdate").onchange = e => saveSetting({ autoUpdate: e.target.checked });
 $("#autoSync").onchange = e => saveSetting({ autoSyncHours: Number(e.target.value) });
 $("#autoApply").onchange = e => saveSetting({ autoApply: e.target.checked });
 $("#syncAll").onclick = async () => { try { await api("sync/all", {}); toast("Syncing all playlists…"); setTimeout(refresh, 800); } catch (e) { toast(e.message, "err"); } };

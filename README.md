@@ -44,6 +44,11 @@ time it's opened:
 **Windows, first time only.** If a blue "Windows protected your PC" box appears, click
 **More info → Run anyway**.
 
+**Updates.** From v0.1.1 on, SuperSync updates itself. When a new version is out, it downloads it
+in the background and an **Update** button appears at the top. Click it and SuperSync restarts
+into the new version in a few seconds. You can turn this off in **Settings → Updates**. If you
+have v0.1, download v0.1.1 once by hand; after that it's automatic.
+
 ## Getting started
 
 When you open SuperSync, a small window appears (on Mac, a Terminal window). Leave it open while

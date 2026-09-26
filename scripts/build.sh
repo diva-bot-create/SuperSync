@@ -28,4 +28,16 @@ if command -v lipo >/dev/null; then
   codesign --force --sign - dist/SuperSync-mac 2>/dev/null || true
   echo "  SuperSync-mac (universal)"
 fi
+# Release zips, named as the self-updater expects.
+if [ -f dist/SuperSync-mac ]; then
+  tmp=$(mktemp -d)
+  cp dist/SuperSync-mac "$tmp/SuperSync"
+  (cd "$tmp" && ditto -c -k --norsrc SuperSync "$OLDPWD/dist/SuperSync-mac.zip")
+  rm -rf "$tmp"
+fi
+tmp=$(mktemp -d)
+cp dist/SuperSync-windows.exe "$tmp/SuperSync.exe"
+(cd "$tmp" && zip -q "$OLDPWD/dist/SuperSync-windows.zip" SuperSync.exe)
+rm -rf "$tmp"
+
 ls -lh dist

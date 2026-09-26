@@ -2,6 +2,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -17,12 +18,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"supersync/internal/app"
 	"supersync/internal/rbdb"
+	"supersync/internal/update"
 )
 
 //go:embed static
@@ -34,6 +38,12 @@ type server struct {
 	app     *app.App
 	token   string
 	version string
+	upd     *update.Updater
+	srv     *http.Server
+	ln      net.Listener
+	port    int
+	// restarting is set while an update restarts SuperSync.
+	restarting atomic.Bool
 
 	mu       sync.Mutex
 	scanning *progress
@@ -52,9 +62,23 @@ func Serve(a *app.App, port int, openBrowser bool, version string) error {
 		port = defaultPort
 	}
 	s := &server{app: a, token: loadToken(), version: version}
+	update.Cleanup()
+	s.upd = update.New(version)
 	go a.Background(nil) // scheduled syncs, auto-apply when rekordbox closes
+	go s.updateLoop()
 
+	// Restarted after an update: take the same port back (the old process is
+	// just letting go of it) and don't open another browser tab.
+	restarted := false
+	if p, err := strconv.Atoi(os.Getenv(restartPortEnv)); err == nil && p > 0 {
+		os.Unsetenv(restartPortEnv)
+		port, openBrowser, restarted = p, false, true
+	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	for i := 0; err != nil && restarted && i < 60; i++ {
+		time.Sleep(250 * time.Millisecond)
+		ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	}
 	if err != nil {
 		// Already running? Then just open it.
 		if isRunning(port) {
@@ -70,6 +94,7 @@ func Serve(a *app.App, port int, openBrowser bool, version string) error {
 		}
 	}
 	port = ln.Addr().(*net.TCPAddr).Port
+	s.port = port
 	u := s.url(port)
 
 	mux := http.NewServeMux()
@@ -83,7 +108,53 @@ func Serve(a *app.App, port int, openBrowser bool, version string) error {
 		go func() { time.Sleep(300 * time.Millisecond); open(u) }()
 	}
 	srv := &http.Server{Handler: s.guard(mux), ReadHeaderTimeout: 10 * time.Second}
-	return srv.Serve(ln)
+	s.srv, s.ln = srv, ln
+	err = srv.Serve(ln)
+	if s.restarting.Load() {
+		select {} // the update is restarting SuperSync; don't exit first
+	}
+	return err
+}
+
+const restartPortEnv = "SUPERSYNC_RESTART_PORT"
+
+// updateLoop checks GitHub for a new version shortly after starting and then
+// every 6 hours, downloading it in the background unless turned off.
+func (s *server) updateLoop() {
+	time.Sleep(5 * time.Second)
+	for {
+		if !s.app.Cfg.NoAutoUpdate {
+			s.upd.Check(context.Background())
+		}
+		time.Sleep(6 * time.Hour)
+	}
+}
+
+// installUpdate swaps in the downloaded version and restarts into it, after
+// any library write in progress has finished.
+func (s *server) installUpdate() error {
+	st := s.upd.Status()
+	if st.State != "ready" || st.Download == "" {
+		return errors.New("no update is ready")
+	}
+	if len(s.app.Syncing()) > 0 {
+		return errors.New("a playlist is still syncing; update once it's finished")
+	}
+	release := rbdb.HoldWrites()
+	if err := update.Install(st.Download); err != nil {
+		release()
+		return fmt.Errorf("couldn't install the update: %w", err)
+	}
+	go func() {
+		time.Sleep(400 * time.Millisecond) // let the reply reach the page
+		s.restarting.Store(true)
+		s.ln.Close() // free the port for the new version
+		if err := update.Restart(fmt.Sprintf("%s=%d", restartPortEnv, s.port)); err != nil {
+			fmt.Println("The update is installed; close this window and open SuperSync again.", err)
+			os.Exit(0)
+		}
+	}()
+	return nil
 }
 
 func (s *server) url(port int) string {

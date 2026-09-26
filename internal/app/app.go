@@ -34,6 +34,8 @@ type Config struct {
 	AutoSyncHours int `json:"autoSyncHours"`
 	// AutoApply writes waiting changes as soon as rekordbox has been closed.
 	AutoApply bool `json:"autoApply"`
+	// NoAutoUpdate turns off downloading new versions from GitHub in the background.
+	NoAutoUpdate bool `json:"noAutoUpdate,omitempty"`
 	// Decisions records the user's answers for uncertain matches:
 	// "sc:<track id>" -> absolute path of the owned file, or "none".
 	Decisions map[string]string `json:"decisions,omitempty"`

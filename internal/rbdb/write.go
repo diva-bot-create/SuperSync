@@ -61,6 +61,13 @@ var writeMu sync.Mutex
 // while SuperSync was preparing its change; nothing was written.
 var ErrChanged = errors.New("rekordbox's library changed while SuperSync was working on it, so nothing was written; try again")
 
+// HoldWrites waits for any write in progress to finish and blocks new ones
+// until release is called (used before SuperSync restarts to update itself).
+func HoldWrites() (release func()) {
+	writeMu.Lock()
+	return writeMu.Unlock
+}
+
 type fingerprint struct {
 	size, walSize int64
 	mod, walMod   time.Time

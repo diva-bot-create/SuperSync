@@ -8,6 +8,23 @@ Go 1.26+, no cgo. Everything is one self-contained executable; the web UI is emb
 scripts/build.sh v0.1      # Mac (universal), Windows and Linux executables in dist/
 ```
 
+## Releases and self-update
+
+Tag `vX.Y.Z` and run `scripts/build.sh vX.Y.Z`. It also writes `dist/SuperSync-mac.zip` (holding
+`SuperSync`) and `dist/SuperSync-windows.zip` (holding `SuperSync.exe`). Attach both to a GitHub
+release. These names are what `internal/update` looks for.
+
+A running copy checks `releases/latest` 5 s after starting and then every 6 h. When it finds a
+newer version, it downloads the zip and checks the size and GitHub's SHA-256 digest. It then
+extracts the executable next to itself as `.SuperSync-update-<tag>`, and runs `help` on it to make
+sure it starts and reports the right version. **Update** waits for any library write in progress
+and refuses while playlists are syncing. It then renames the new file over the old one and
+restarts. On Mac this is `exec` in place, so the process and Terminal window stay the same. On
+Windows the old `.exe` is renamed to `.old`, the new one is started in the same console, and the
+`.old` file is removed on the next start. The new process takes over the same port, and the page
+reloads once `/api/state` reports the new version. `SUPERSYNC_UPDATE_API` points the check at
+another releases JSON, for testing.
+
 ## Tests
 Go 1.26+, no cgo. `go test ./...` (the audio tests use ffmpeg when it's installed).
 The rekordbox database tests use pyrekordbox's real test library (MIT). Download

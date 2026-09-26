@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"supersync/internal/audio"
 	"supersync/internal/rbdb"
 	"supersync/internal/soundcloud"
+	"supersync/internal/update"
 )
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -32,6 +34,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			MinKbps     *int    `json:"minKbps"`
 			AutoSync    *int    `json:"autoSyncHours"`
 			AutoApply   *bool   `json:"autoApply"`
+			AutoUpdate  *bool   `json:"autoUpdate"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -62,7 +65,22 @@ func (s *server) routes(mux *http.ServeMux) {
 			a.Cfg.AutoApply = *req.AutoApply
 			err = a.Cfg.Save()
 		}
+		if err == nil && req.AutoUpdate != nil {
+			a.Cfg.NoAutoUpdate = !*req.AutoUpdate
+			if err = a.Cfg.Save(); err == nil && *req.AutoUpdate {
+				go s.upd.Check(context.Background())
+			}
+		}
 		reply(w, s.state(), err)
+	})
+
+	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		go s.upd.Check(context.Background())
+		time.Sleep(150 * time.Millisecond) // usually enough to report "checking"
+		reply(w, s.state(), nil)
+	})
+	mux.HandleFunc("POST /api/update/install", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, map[string]bool{"ok": true}, s.installUpdate())
 	})
 
 	mux.HandleFunc("POST /api/scan", func(w http.ResponseWriter, r *http.Request) {
@@ -568,6 +586,8 @@ type state struct {
 	LastSync    time.Time       `json:"lastSync,omitzero"`
 	NextSync    time.Time       `json:"nextSync,omitzero"`
 	LastCleanup string          `json:"lastCleanup,omitempty"` // summary, when it can be undone
+	Update      update.Status   `json:"update"`
+	AutoUpdate  bool            `json:"autoUpdate"`
 }
 
 func (s *server) state() state {
@@ -585,6 +605,7 @@ func (s *server) state() state {
 		st.LastCleanup = lc.Summary
 	}
 	st.LastSync = a.State.LastSyncTime()
+	st.Update, st.AutoUpdate = s.upd.Status(), !a.Cfg.NoAutoUpdate
 	if a.Src != nil {
 		info := a.Src.Info()
 		st.Source = &info
