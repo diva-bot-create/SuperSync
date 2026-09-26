@@ -105,6 +105,9 @@ type App struct {
 	jobs     map[string]*Job
 	cuePlans map[analyze.Pair]*analyze.CueTransfer // cleared on rescan
 	better   map[string]*BetterCopy                // track ID -> a better copy found on disk
+	// cloudFound: Cloud Library Sync track (stored path) -> its file found on
+	// this computer ("" = looked, not found).
+	cloudFound map[string]string
 }
 
 func New() *App {
@@ -139,6 +142,9 @@ func (a *App) rebuild() {
 	if a.Src == nil {
 		a.Col = nil
 		return
+	}
+	if a.applyCloudPathsLocked() {
+		go a.resolveCloudFiles()
 	}
 	pls := a.Src.TrackPlaylists()
 	col := rekordbox.Collection{}
