@@ -2827,17 +2827,25 @@ loaders.upgrades = async () => {
   }
   try { ups = await api("upgrades"); upsLoaded = true; showErr($("#upErr"), null); renderUps(); } catch (e) { showErr($("#upErr"), e); }
 };
+// Only tracks you can do something about: a better copy is ready to swap in,
+// or the uploader linked a download or a store.
+function actionable(u) {
+  if (u.better) return true;
+  const { dl, buy } = u.sc ? sources(u.sc) : { dl: [], buy: [] };
+  return dl.length > 0 || buy.length > 0;
+}
 function renderUps() {
-  setCount($("#upCount"), ups.length);
-  $("#upSub").textContent = `Tracks where your only copy is below ${S.minKbps >= 1000 ? "lossless" : S.minKbps + " kbps"}, e.g. a SoundCloud rip, including files that claim to be 320 or lossless but were converted up from something worse (their sound stops at a lower frequency than a real one). Buy them properly and rescan; they'll drop off this list.`;
+  const all = ups.filter(actionable);
+  setCount($("#upCount"), all.length);
+  $("#upSub").textContent = `Tracks below ${S.minKbps >= 1000 ? "lossless" : S.minKbps + " kbps"} (including files converted up from something worse) that you can get a better copy of: the uploader linked a download or a store, or a better copy is already on your computer, ready to swap in.`;
   const q = $("#upFilter").value.toLowerCase();
-  const list = ups.filter(u => !q || (u.rel + " " + u.artist + " " + u.title).toLowerCase().includes(q));
+  const list = all.filter(u => !q || (u.rel + " " + u.artist + " " + u.title).toLowerCase().includes(q));
   const items = list.map(u => ({ key: "u" + u.rel, cls: "item uitem", html: `<div>${qBadge({ quality: qLabel(u), upscaled: u.upscaled, trueKbps: u.trueKbps }, true)}</div><div>
       <div class="sctitle">${esc(trackName(u))}</div>
       ${u.upscaled ? `<div class="warn" style="margin:2px 0">Upscaled: labelled ${esc(qLabel(u))} but ${esc(u.upscaled)}.</div>` : /soundcloud rip/i.test(u.reason) ? `<div class="byline">SoundCloud rip</div>` : ""}
       <div class="file"><span class="path">${esc(u.rel)}</span> <button class="link" data-reveal="${esc(u.path)}">show</button></div>
       ${u.better ? `<div class="get" style="justify-content:flex-start;margin-top:6px"><button class="getb" data-swap="${esc(u.rel)}">↑ Swap in the ${esc(u.better.label)} copy</button><span class="muted" style="font-size:12px;align-self:center">from ${esc(u.better.where)}</span></div>` : storeLinks(u)}</div>` }));
-  if (!items.length) items.push({ key: "empty", cls: "empty", html: ups.length ? "No matches." : "Everything meets the quality bar." });
+  if (!items.length) items.push({ key: "empty", cls: "empty", html: all.length ? "No matches." : ups.length ? "Nothing to upgrade right now: none of your lower-quality tracks has a download or buy link." : "Everything meets the quality bar." });
   patchList($("#upRows"), items);
 }
 $("#upFilter").oninput = renderUps;
@@ -2848,7 +2856,7 @@ $("#upRows").addEventListener("click", e => {
   if (sw) { const u = ups.find(x => x.rel === sw.dataset.swap); if (u?.id) swapUpgrade({ id: u.id, title: u.title || trackName(u) }, u.better.path).then(() => { upsLoaded = false; loaders.upgrades(); }); }
 });
 $("#upCsv").onclick = () => {
-  const lines = [["Quality", "Artist", "Title", "File", "Download links", "Buy links", "SoundCloud"], ...ups.map(u => {
+  const lines = [["Quality", "Artist", "Title", "File", "Download links", "Buy links", "SoundCloud"], ...ups.filter(actionable).map(u => {
     const { dl, buy } = u.sc ? sources(u.sc) : { dl: [], buy: [] };
     return [u.reason, u.artist, u.title, u.rel, dl.map(x => x.url).join(" "), buy.map(x => x.url).join(" "), u.sc?.url || ""];
   })];
