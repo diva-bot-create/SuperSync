@@ -3,6 +3,9 @@ package app
 import (
 	"sort"
 
+	"supersync/internal/match"
+	"supersync/internal/rbdb"
+
 	"supersync/internal/analyze"
 	"supersync/internal/library"
 	"supersync/internal/rekordbox"
@@ -20,8 +23,28 @@ func pairKey(a, b string) string {
 	return a + "\x00" + b
 }
 
-// duplicates is FindDuplicates without the groups the user rejected.
+// duplicates is FindDuplicates without the groups the user rejected. Files
+// are compared by rekordbox's title and artist for them as well as their own
+// tags and names, so two songs that look the same in rekordbox are compared
+// even when their files are tagged or named differently.
 func (a *App) duplicates(lib *library.Library) []*analyze.Group {
+	if a.Src != nil {
+		byPath := map[string]*rbdb.Track{}
+		for _, t := range a.Src.Tracks() {
+			byPath[rekordbox.NormPath(t.Path)] = t
+		}
+		lib = lib.WithExtraKeys(func(t *library.Track) []match.Key {
+			rt := byPath[rekordbox.NormPath(t.Path)]
+			if rt == nil || rt.Title == "" {
+				return nil
+			}
+			ks := match.Parse(rt.Artist, rt.Title)
+			for i := range ks {
+				ks[i].Duration = t.Duration
+			}
+			return ks
+		})
+	}
 	gs := analyze.FindDuplicates(lib, a.Col)
 	a.mu.Lock()
 	rejected := map[string]bool{}

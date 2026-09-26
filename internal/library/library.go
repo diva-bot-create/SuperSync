@@ -289,3 +289,27 @@ func (l *Library) Find(keys []match.Key) []Hit {
 func (l *Library) ByPath(p string) *Track {
 	return l.byPath[p]
 }
+
+// WithExtraKeys returns a copy of the library whose tracks also match on
+// extra keys (e.g. the title and artist rekordbox has for the file, which
+// may differ from the file's own tags and name). The tracks are copied; the
+// original library isn't changed.
+func (l *Library) WithExtraKeys(extra func(t *Track) []match.Key) *Library {
+	out := &Library{Key: l.Key, Root: l.Root, ScannedAt: l.ScannedAt, index: map[string][]int{}, byPath: map[string]*Track{}}
+	for i, t := range l.Tracks {
+		c := *t
+		c.Keys = append(append([]match.Key(nil), t.Keys...), extra(t)...)
+		out.Tracks = append(out.Tracks, &c)
+		out.byPath[c.Path] = &c
+		seen := map[string]bool{}
+		for _, k := range c.Keys {
+			for _, w := range append(k.Title, strings.Join(k.Title, "")) {
+				if !seen[w] {
+					seen[w] = true
+					out.index[w] = append(out.index[w], i)
+				}
+			}
+		}
+	}
+	return out
+}
