@@ -1,10 +1,12 @@
 package rbdb
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -231,3 +233,39 @@ func TestMerge(t *testing.T) {
 }
 
 func uuidLike() string { return uuid.NewString() }
+
+// Two SuperSync writes must take turns (not overwrite each other), and a
+// write must refuse if something else changed the library meanwhile.
+func TestWritesTakeTurns(t *testing.T) {
+	loc := library(t)
+	tx, err := Begin(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := make(chan *Tx)
+	go func() { tx2, _ := Begin(loc); second <- tx2 }()
+	select {
+	case <-second:
+		t.Fatal("a second write began while the first was open")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, err := tx.CreatePlaylist("First", "root", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Commit(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	tx2 := <-second
+	if tx2 == nil {
+		t.Fatal("second write didn't begin")
+	}
+	if id, _ := tx2.FindPlaylist("First", "root", false); id == "" {
+		t.Fatal("second write didn't see the first one's change")
+	}
+	// Something else writes the library while tx2 is open.
+	later := time.Now().Add(5 * time.Second)
+	os.Chtimes(loc.DB, later, later)
+	if _, err := tx2.Commit(t.TempDir()); !errors.Is(err, ErrChanged) {
+		t.Fatalf("commit over an outside change: got %v, want ErrChanged", err)
+	}
+}

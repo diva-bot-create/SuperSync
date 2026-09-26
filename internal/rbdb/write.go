@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,6 +49,32 @@ type Tx struct {
 	trackLink int64
 	playlists []xmlNode // additions for masterPlaylists6.xml
 	done      bool
+	start     fingerprint // the library as it was when the transaction began
+}
+
+// writeMu makes SuperSync's own writes take turns: a transaction holds it
+// from Begin until Commit or Rollback, so a background sync and a clean-up
+// can't both start from the same library and overwrite each other's changes.
+var writeMu sync.Mutex
+
+// ErrChanged means the library was written by something else (rekordbox)
+// while SuperSync was preparing its change; nothing was written.
+var ErrChanged = errors.New("rekordbox's library changed while SuperSync was working on it, so nothing was written; try again")
+
+type fingerprint struct {
+	size, walSize int64
+	mod, walMod   time.Time
+}
+
+func fingerprintOf(loc *Location) fingerprint {
+	var f fingerprint
+	if st, err := os.Stat(loc.DB); err == nil {
+		f.size, f.mod = st.Size(), st.ModTime()
+	}
+	if st, err := os.Stat(loc.DB + "-wal"); err == nil {
+		f.walSize, f.walMod = st.Size(), st.ModTime()
+	}
+	return f
 }
 
 type xmlNode struct {
@@ -57,10 +84,18 @@ type xmlNode struct {
 }
 
 // Begin opens the library for writing. rekordbox must be closed.
-func Begin(loc *Location) (*Tx, error) {
+func Begin(loc *Location) (_ *Tx, err error) {
+	writeMu.Lock()
+	unlock := true
+	defer func() {
+		if unlock {
+			writeMu.Unlock()
+		}
+	}()
 	if Running() {
 		return nil, ErrRunning
 	}
+	start := fingerprintOf(loc)
 	plain, salt, err := sqlcipher.Decrypt(loc.DB, Passphrase)
 	if err != nil {
 		return nil, err
@@ -80,7 +115,8 @@ func Begin(loc *Location) (*Tx, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	t := &Tx{loc: loc, salt: salt, plainPath: p, db: db, now: stamp(time.Now())}
+	unlock = false // from here t.abort releases it
+	t := &Tx{loc: loc, salt: salt, plainPath: p, db: db, now: stamp(time.Now()), start: start}
 	if t.tx, err = db.Begin(); err != nil {
 		t.abort()
 		return nil, err
@@ -317,12 +353,17 @@ func (t *Tx) AddToPlaylist(playlistID string, contentIDs ...string) error {
 }
 
 func (t *Tx) abort() {
+	if t.db == nil {
+		return // already finished
+	}
 	if t.tx != nil && !t.done {
 		t.tx.Rollback()
 	}
 	t.db.Close()
+	t.db = nil
 	os.RemoveAll(filepath.Dir(t.plainPath))
 	t.done = true
+	writeMu.Unlock()
 }
 
 // Rollback discards all changes.
@@ -369,6 +410,10 @@ func (t *Tx) Commit(backupRoot string) (string, error) {
 		os.Remove(tmp)
 		return "", ErrRunning
 	}
+	if fingerprintOf(t.loc) != t.start {
+		os.Remove(tmp)
+		return "", ErrChanged
+	}
 	backup, err := t.backup(backupRoot)
 	if err != nil {
 		os.Remove(tmp)
@@ -388,9 +433,20 @@ func (t *Tx) Commit(backupRoot string) (string, error) {
 }
 
 func (t *Tx) backup(root string) (string, error) {
-	dir := filepath.Join(root, time.Now().Format("2006-01-02 15.04.05"))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", err
+	}
+	// One folder per write, never shared: two writes in the same second
+	// mustn't overwrite each other's backup. Names sort by time.
+	base := filepath.Join(root, time.Now().Format("2006-01-02 15.04.05.000"))
+	dir := base
+	for i := 2; ; i++ {
+		if err := os.Mkdir(dir, 0o755); err == nil {
+			break
+		} else if !os.IsExist(err) {
+			return "", err
+		}
+		dir = fmt.Sprintf("%s-%d", base, i)
 	}
 	for _, p := range []string{t.loc.DB, t.loc.DB + "-wal", t.loc.DB + "-shm", t.loc.PlaylistXML} {
 		if _, err := os.Stat(p); err != nil {

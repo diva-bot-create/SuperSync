@@ -305,6 +305,8 @@ func Backups(root string) []string {
 
 // Restore puts a backup (from Commit) back in place. rekordbox must be closed.
 func Restore(loc *Location, backupDir string) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
 	if Running() {
 		return ErrRunning
 	}
