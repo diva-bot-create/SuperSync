@@ -49,6 +49,15 @@ func DataDir() string {
 	return filepath.Join(dir, "SuperSync")
 }
 
+// CacheDir is for files that can be re-created (like saved SoundCloud streams).
+func CacheDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return filepath.Join(DataDir(), "cache")
+	}
+	return filepath.Join(dir, "SuperSync")
+}
+
 func configPath() string { return filepath.Join(DataDir(), "config.json") }
 
 func LoadConfig() *Config {

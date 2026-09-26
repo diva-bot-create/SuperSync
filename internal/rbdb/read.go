@@ -3,6 +3,7 @@ package rbdb
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -35,6 +36,29 @@ type Track struct {
 	Cues       int     `json:"cues"`
 	// Analysis is rekordbox's analysis file (ANLZ0000.DAT) for the track, if analysed.
 	Analysis string `json:"-"`
+	// Stream is the streaming service for tracks rekordbox plays from the
+	// internet (SoundCloud, Beatport, TIDAL...): they have no file, and Path
+	// holds a link like "soundcloud:tracks:123456" instead. StreamID is the
+	// service's track id.
+	Stream   string `json:"stream,omitempty"`
+	StreamID string `json:"streamId,omitempty"`
+}
+
+var streamRe = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9+.-]*):(?://)?(?:.*?[:/])?(\d+)$`)
+
+// parseStream recognises rekordbox's streaming-track links. Local paths
+// ("/Users/...", "C:/...", "\\server\share") are never streams.
+func parseStream(p string) (service, id string) {
+	if p == "" || p[0] == '/' || p[0] == '\\' || len(p) > 1 && p[1] == ':' {
+		return "", ""
+	}
+	if m := streamRe.FindStringSubmatch(p); m != nil {
+		return strings.ToLower(m[1]), m[2]
+	}
+	if i := strings.Index(p, ":"); i > 1 {
+		return strings.ToLower(p[:i]), ""
+	}
+	return "", ""
 }
 
 // Playlist is a playlist, folder, or smart playlist.
@@ -93,6 +117,7 @@ func (d *DB) Tracks() ([]*Track, error) {
 			&rating, &t.Color, &t.PlayCount, &t.Added, &t.Year, &analysed, &t.UUID, &t.Analysis, &t.Cues); err != nil {
 			return nil, err
 		}
+		t.Stream, t.StreamID = parseStream(t.Path)
 		t.BPM = float64(bpm) / 100
 		t.Rating = stars(rating)
 		t.Analysed = analysed != 0

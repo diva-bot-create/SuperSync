@@ -149,6 +149,12 @@ func (c *Client) downloadOriginal(t *Track, dir, token string, progress Progress
 	return c.fetchFile(r.RedirectURI, dir, baseName(t), "", progress)
 }
 
+// SaveStream saves the track's MP3 stream into dir, untagged (for listening
+// to tracks that only stream).
+func (c *Client) SaveStream(t *Track, dir string) (string, error) {
+	return c.downloadStream(t, dir, nil)
+}
+
 func (c *Client) downloadStream(t *Track, dir string, progress Progress) (string, error) {
 	var prog, hls *transcoding
 	for i := range t.transcodings {

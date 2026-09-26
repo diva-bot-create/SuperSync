@@ -215,6 +215,15 @@ func (t *rawTrack) convert() *Track {
 	return out
 }
 
+// TrackByID looks a track up by its SoundCloud id.
+func (c *Client) TrackByID(id string) (*Track, error) {
+	var raw rawTrack
+	if err := c.get("/tracks/"+url.PathEscape(id), url.Values{}, &raw); err != nil {
+		return nil, err
+	}
+	return raw.convert(), nil
+}
+
 // get calls the API, refreshing the client_id once if it has expired.
 func (c *Client) get(path string, q url.Values, out any, base ...string) error {
 	root := api

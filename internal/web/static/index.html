@@ -237,6 +237,9 @@ main { padding-bottom: calc(var(--player) + 40px); }
 .tier.hq { color: var(--info); background: var(--info-soft); }
 .tier.uhq { color: var(--have); background: var(--have-soft); }
 .tier.none { color: var(--muted); background: var(--panel-2); }
+.tier.stream { color: #d59cff; background: color-mix(in srgb, #b46cff 16%, transparent); }
+.warnish { color: var(--need); cursor: help; }
+.tier.noaccess { color: var(--need); background: var(--panel-2); }
 button.tier { border: 1.5px solid transparent; padding: 3px 9px; font-size: 11px; }
 button.tier[aria-pressed=true] { border-color: currentColor; }
 #search { width: 220px; }
@@ -1039,8 +1042,12 @@ const fmtTime = ms => fmtDur(ms / 1000) || "0:00";
 const searchURL = q => "https://www.beatport.com/search?q=" + encodeURIComponent(q);
 
 // ---------- library ----------
-const TIER_LABEL = { low: "LOW", normal: "NORMAL", hq: "HQ", uhq: "UHQ" };
-const TIER_TIP = { low: "Low: under 128 kbps", normal: "Normal: about 128 kbps", hq: "HQ: about 256 kbps", uhq: "UHQ: over 256 kbps or lossless" };
+const TIER_LABEL = { low: "LOW", normal: "NORMAL", hq: "HQ", uhq: "UHQ", stream: "STREAM" };
+const TIER_TIP = { low: "Low: under 128 kbps", normal: "Normal: about 128 kbps", hq: "HQ: about 256 kbps", uhq: "UHQ: over 256 kbps or lossless", stream: "Streams inside rekordbox: there's no file on this computer" };
+const SERVICE = { soundcloud: "SoundCloud", beatport: "Beatport", beatsource: "Beatsource", tidal: "TIDAL" };
+const NOACCESS_TIP = navigator.platform.startsWith("Mac")
+  ? "The file is probably there, but macOS isn't letting SuperSync read this folder. Open System Settings → Privacy & Security → Files & Folders (or Full Disk Access) and allow SuperSync, then click Rescan."
+  : "The file is probably there, but SuperSync isn't allowed to read this folder. Check the folder's permissions, then click Rescan.";
 const ROW_H = 56;
 let libData = null, libLoaded = "";
 const cur = { id: null, data: null, view: [] };
@@ -1156,10 +1163,13 @@ function renderListHead(animate) {
   const notIn = d.rows.filter(r => !r.id).length;
   let meta = `${d.rows.length.toLocaleString()} track${d.rows.length === 1 ? "" : "s"} · ${Math.floor(total / 3600) ? Math.floor(total / 3600) + " h " : ""}${Math.round(total % 3600 / 60)} min`;
   if (d.sc) meta += ` · synced from <a href="${esc(d.sc.url)}" target="_blank" rel="noopener">${d.sc.source === "youtube" ? "YouTube" : "SoundCloud"}</a>${notIn ? ` · ${notIn} not in your library` : ""}${d.sc.pending ? " · waiting for rekordbox to close" : ""}`;
-  $("#plMeta").innerHTML = meta;
   $(".libmain").classList.toggle("sc", !!d.sc);
   renderSyncBtn(animate);
-  const tiers = ["low", "normal", "hq", "uhq"].filter(t => d.tiers[t]);
+  const tiers = ["low", "normal", "hq", "uhq", "stream"].filter(t => d.tiers[t]);
+  const noAccess = d.rows.filter(r => r.noAccess).length, gone = d.rows.filter(r => r.missing && !r.noAccess).length;
+  if (noAccess) meta += ` · <span class="warnish" title="${esc(NOACCESS_TIP)}">${noAccess} file${noAccess === 1 ? "" : "s"} SuperSync isn't allowed to read</span>`;
+  if (gone) meta += ` · ${gone} file${gone === 1 ? "" : "s"} not found`;
+  $("#plMeta").innerHTML = meta;
   $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
     + (notIn ? `<button class="tier none" data-tier="missing" aria-pressed="${tierFilter === "missing"}" title="SoundCloud tracks not in your library yet">NEED ${notIn}</button>` : "");
   if (animate) { rise([$("#plName"), $("#plMeta")], { gap: 60, dist: 6 }); rise($("#tierChips").children, { gap: 40, dist: 6 }); }
@@ -1287,7 +1297,12 @@ addEventListener("resize", () => { if (cur.data) renderRows(false); });
 
 function tierBadge(r) {
   if (!r.id) return `<span class="tier none" title="${esc(r.note || "")}">${r.status === "maybe" ? "MAYBE" : "NEED"}</span>`;
-  if (r.missing) return `<span class="tier none" title="The file isn't where the library says it is">MISSING</span>`;
+  if (r.stream) {
+    const svc = SERVICE[r.stream] || r.stream;
+    return `<span class="tier stream" title="${esc(r.stream === "soundcloud" ? "Streams from SoundCloud inside rekordbox; there's no file on this computer. SuperSync plays it from SoundCloud." : `Streams from ${svc} inside rekordbox; there's no file on this computer, so it only plays in rekordbox.`)}">${esc(svc.toUpperCase())}</span>`;
+  }
+  if (r.noAccess) return `<span class="tier noaccess" title="${esc(NOACCESS_TIP)}">NO ACCESS</span>`;
+  if (r.missing) return `<span class="tier none" title="${esc("The file isn't where rekordbox says it is: " + (r.path || ""))}">MISSING</span>`;
   if (!r.tier) return "";
   return `<span class="tier ${r.tier}" title="${esc(TIER_TIP[r.tier] + " · " + (r.format || "").toUpperCase() + " " + (r.kbps || "") + " kbps" + (r.tierNote ? " · " + r.tierNote : ""))}">${TIER_LABEL[r.tier]}</span>`;
 }
@@ -1620,6 +1635,7 @@ async function playTrack(r, fromMs = 0) {
     if (!queue.some(q => q.id === r.id)) queue = cur.view.filter(x => x.id && !x.missing);
     qi = queue.findIndex(q => q.id === r.id);
     au.src = `/api/audio/${encodeURIComponent(r.id)}?k=${token}`;
+    if (r.stream === "soundcloud") toast("Getting this track from SoundCloud…");
     const t = $("#pTitle"), a = $("#pArtist");
     t.textContent = r.title; a.textContent = r.artist || "";
     rise([t, a], { gap: 60, dist: 6 });
@@ -1643,7 +1659,13 @@ au.addEventListener("play", () => { $("#pPlay").textContent = "❚❚"; bump($("
 au.addEventListener("pause", () => { $("#pPlay").textContent = "▶"; drawAll(); });
 au.addEventListener("ended", () => step(1));
 au.addEventListener("loadedmetadata", () => { if (nowPlaying) nowPlaying.length = au.duration; $("#pDur").textContent = fmtDur(au.duration) || "0:00"; });
-au.addEventListener("error", () => { if (nowPlaying) toast("This file can't be played in the browser.", "err"); });
+au.addEventListener("error", async () => {
+  if (!nowPlaying) return;
+  // Ask the server why (a missing file, a stream it can't fetch...).
+  let why = "This file can't be played here.";
+  try { const r = await fetch(au.src, { headers: { Range: "bytes=0-0" } }); if (!r.ok) why = (await r.text()).trim() || why; } catch {}
+  toast(why, "err");
+});
 function loop() {
   drawAll();
   $("#pCur").textContent = fmtDur(au.currentTime) || "0:00";

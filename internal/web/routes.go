@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"supersync/internal/analyze"
@@ -156,7 +158,12 @@ func (s *server) routes(mux *http.ServeMux) {
 			http.NotFound(w, r)
 			return
 		}
-		serveAudio(w, r, t.Path)
+		path, err := s.audioPath(t)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		serveAudio(w, r, path)
 	})
 
 	mux.HandleFunc("GET /api/waveform/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +172,12 @@ func (s *server) routes(mux *http.ServeMux) {
 			reply(w, nil, errors.New("no such track"))
 			return
 		}
-		wf, err := audio.ComputeWaveform(t.Path, 900, filepath.Join(app.DataDir(), "waveforms"))
+		path, err := s.audioPath(t)
+		if err != nil {
+			reply(w, nil, err)
+			return
+		}
+		wf, err := audio.ComputeWaveform(path, 900, filepath.Join(app.DataDir(), "waveforms"))
 		if err != nil {
 			reply(w, nil, err)
 			return
@@ -425,6 +437,9 @@ type Row struct {
 	Added    string  `json:"added,omitempty"`
 	Path     string  `json:"path,omitempty"`
 	Missing  bool    `json:"missing,omitempty"` // file not on disk
+	// NoAccess: the file may well be there, but the system won't let SuperSync read it.
+	NoAccess bool   `json:"noAccess,omitempty"`
+	Stream   string `json:"stream,omitempty"` // streaming service, for tracks with no file
 
 	// Rows of SoundCloud-imported playlists.
 	SC     *soundcloud.Track `json:"sc,omitempty"`
@@ -440,8 +455,17 @@ func (s *server) row(t *rbdb.Track) *Row {
 	if r.Title == "" {
 		r.Title = strings.TrimSuffix(filepath.Base(t.Path), filepath.Ext(t.Path))
 	}
-	if _, err := os.Stat(t.Path); err != nil {
-		r.Missing = true
+	switch {
+	case t.Stream != "":
+		r.Stream, r.Tier, r.Kbps, r.Format = t.Stream, "stream", 0, ""
+		if r.Title == "" || r.Title == strings.TrimSuffix(filepath.Base(t.Path), filepath.Ext(t.Path)) {
+			r.Title = t.Title
+		}
+	default:
+		if _, err := os.Stat(t.Path); err != nil {
+			r.Missing = true
+			r.NoAccess = os.IsPermission(err)
+		}
 	}
 	return r
 }
@@ -534,6 +558,101 @@ func (s *server) scRows(sp *app.SCPlaylist, add func(*Row)) {
 
 // serveAudio streams a file with range support, re-wrapping AIFF as WAV
 // because Chromium browsers can't play AIFF.
+// audioPath is the file to play for a track: its own file, or for a track
+// rekordbox streams from SoundCloud, the stream saved once into a cache.
+func (s *server) audioPath(t *rbdb.Track) (string, error) {
+	switch t.Stream {
+	case "":
+		return t.Path, nil
+	case "soundcloud":
+		if t.StreamID != "" {
+			return s.soundcloudStream(t.StreamID)
+		}
+	}
+	return "", fmt.Errorf("this track streams from %s inside rekordbox; SuperSync can't play it", serviceName(t.Stream))
+}
+
+func serviceName(s string) string {
+	switch s {
+	case "soundcloud":
+		return "SoundCloud"
+	case "beatport", "beatsource":
+		return strings.ToUpper(s[:1]) + s[1:]
+	case "tidal":
+		return "TIDAL"
+	}
+	return s
+}
+
+var streamLocks sync.Map // SoundCloud track id -> *sync.Mutex
+
+// soundcloudStream returns the cached stream for a SoundCloud track id,
+// fetching it the first time. The cache keeps the 60 most recently played.
+func (s *server) soundcloudStream(id string) (string, error) {
+	mu, _ := streamLocks.LoadOrStore(id, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+	root := filepath.Join(app.CacheDir(), "streams")
+	dir := filepath.Join(root, id)
+	if es, _ := os.ReadDir(dir); len(es) > 0 {
+		now := time.Now()
+		os.Chtimes(dir, now, now)
+		return filepath.Join(dir, es[0].Name()), nil
+	}
+	t, err := s.app.SC.TrackByID(id)
+	if err != nil {
+		return "", fmt.Errorf("couldn't get this track from SoundCloud: %w", err)
+	}
+	tmp, err := os.MkdirTemp(root+"-tmp", id+"-")
+	if err != nil {
+		if err = os.MkdirAll(root+"-tmp", 0o755); err == nil {
+			tmp, err = os.MkdirTemp(root+"-tmp", id+"-")
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	defer os.RemoveAll(tmp)
+	p, err := s.app.SC.SaveStream(t, tmp)
+	if err != nil {
+		return "", err
+	}
+	os.MkdirAll(root, 0o755)
+	if err := os.Rename(tmp, dir); err != nil {
+		return "", err
+	}
+	pruneStreams(root, 60)
+	return filepath.Join(dir, filepath.Base(p)), nil
+}
+
+func pruneStreams(root string, keep int) {
+	es, _ := os.ReadDir(root)
+	if len(es) <= keep {
+		return
+	}
+	type d struct {
+		p string
+		t time.Time
+	}
+	var ds []d
+	for _, e := range es {
+		if st, err := os.Stat(filepath.Join(root, e.Name())); err == nil {
+			ds = append(ds, d{filepath.Join(root, e.Name()), st.ModTime()})
+		}
+	}
+	sort.Slice(ds, func(i, j int) bool { return ds[i].t.After(ds[j].t) })
+	for _, x := range ds[min(keep, len(ds)):] {
+		os.RemoveAll(x.p)
+	}
+}
+
+func noAccessHelp() string {
+	if runtime.GOOS == "darwin" {
+		return "Allow SuperSync in System Settings → Privacy & Security → Files & Folders (or Full Disk Access)."
+	}
+	return "Check the folder's permissions."
+}
+
 func serveAudio(w http.ResponseWriter, r *http.Request, path string) {
 	ext := strings.ToLower(filepath.Ext(path))
 	w.Header().Set("Cache-Control", "no-store")
@@ -550,7 +669,11 @@ func serveAudio(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
+		msg := "The file isn't there any more: " + path
+		if os.IsPermission(err) {
+			msg = "SuperSync isn't allowed to read this file's folder. " + noAccessHelp()
+		}
+		http.Error(w, msg, http.StatusNotFound)
 		return
 	}
 	defer f.Close()

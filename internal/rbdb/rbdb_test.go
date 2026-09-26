@@ -269,3 +269,21 @@ func TestWritesTakeTurns(t *testing.T) {
 		t.Fatalf("commit over an outside change: got %v, want ErrChanged", err)
 	}
 }
+
+func TestParseStream(t *testing.T) {
+	for _, c := range []struct{ in, svc, id string }{
+		{"soundcloud:tracks:227350566", "soundcloud", "227350566"},
+		{"beatport:tracks:17289123", "beatport", "17289123"},
+		{"tidal:tracks:1234", "tidal", "1234"},
+		{"https://soundcloud.com/x/123", "https", "123"},
+		{"/Users/dj/Music/a.mp3", "", ""},
+		{"C:/Users/dj/Music/a.mp3", "", ""},
+		{`\\nas\music\a.mp3`, "", ""},
+		{"/Volumes/USB/Contents/tracks:1.mp3", "", ""},
+	} {
+		svc, id := parseStream(c.in)
+		if svc != c.svc || id != c.id {
+			t.Errorf("parseStream(%q) = %q, %q; want %q, %q", c.in, svc, id, c.svc, c.id)
+		}
+	}
+}
