@@ -87,6 +87,7 @@ func runCmd(cmd string, args []string) {
 	move := fs.Bool("move", false, "")
 	port := fs.Int("port", 0, "")
 	noOpen := fs.Bool("no-browser", false, "")
+	background := fs.Bool("background", false, "")
 	fs.Parse(reorder(args))
 
 	if cmd == "help" || cmd == "-h" || cmd == "--help" {
@@ -115,7 +116,7 @@ func runCmd(cmd string, args []string) {
 	}
 
 	if cmd == "ui" {
-		must(web.Serve(a, *port, !*noOpen, version))
+		must(web.Serve(a, *port, !*noOpen, *background, version))
 		return
 	}
 	if cmd == "config" {
@@ -499,7 +500,7 @@ func reorder(args []string) []string {
 		if strings.HasPrefix(a, "-") && len(a) > 1 {
 			flags = append(flags, a)
 			name := strings.TrimLeft(a, "-")
-			if !strings.Contains(name, "=") && name != "move" && name != "no-browser" && name != "missing" && i+1 < len(args) {
+			if !strings.Contains(name, "=") && name != "move" && name != "no-browser" && name != "missing" && name != "background" && i+1 < len(args) {
 				flags = append(flags, args[i+1])
 				i++
 			}

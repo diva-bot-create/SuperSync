@@ -226,7 +226,8 @@ main { padding-bottom: calc(var(--player) + 40px); }
 .scbadge { font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: 0 5px; }
 
 .libmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.lhead { display: flex; align-items: center; gap: 14px; padding: 20px 24px 14px; flex-wrap: wrap; }
+.lhead { display: flex; align-items: center; gap: 10px 14px; padding: 20px 24px 14px; flex-wrap: wrap; }
+.lhead #search { flex: 0 1 240px; min-width: 150px; }
 .ltitle { font-size: 24px; font-weight: 700; letter-spacing: -.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lmeta { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .lmeta a { color: var(--muted); }
@@ -412,6 +413,24 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   body::before, body::after, header::after { animation: none !important; }
 }
+/* Right-click menus */
+.ctx { position: fixed; z-index: 200; min-width: 230px; max-width: 340px; padding: 5px; border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-2) 86%, transparent); backdrop-filter: saturate(1.6) blur(22px); -webkit-backdrop-filter: saturate(1.6) blur(22px);
+  border: 1px solid color-mix(in srgb, var(--line) 80%, white 6%); box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
+  font-size: 13px; user-select: none; transform-origin: var(--ox, 0) var(--oy, 0); }
+.ctx .ch { padding: 6px 10px 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctx button { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border-radius: 7px; cursor: default; color: var(--text); white-space: nowrap; }
+.ctx button .ci { width: 16px; text-align: center; opacity: .8; flex: none; }
+.ctx button .cl { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.ctx button .ck { color: var(--muted); font-size: 11.5px; margin-left: 14px; }
+.ctx button:hover:not([disabled]), .ctx button.on { background: var(--accent); color: var(--accent-ink); }
+.ctx button:hover:not([disabled]) .ck, .ctx button.on .ck { color: inherit; opacity: .75; }
+.ctx button[disabled] { opacity: .4; }
+.ctx button.danger { color: var(--need); }
+.ctx button.danger:hover, .ctx button.danger.on { background: var(--need); color: #fff; }
+.ctx hr { border: 0; border-top: 1px solid var(--line); margin: 5px 6px; }
+#quitOverlay { position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; background: rgba(8,8,10,.9); backdrop-filter: blur(10px); text-align: center; }
+#quitOverlay.hidden { display: none; }
 #updOverlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: rgba(8,8,10,.82); backdrop-filter: blur(10px); }
 #updOverlay.hidden { display: none; }
 #updOverlay > div { display: grid; justify-items: center; gap: 10px; text-align: center; }
@@ -449,6 +468,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <button class="small" id="rescan">Rescan</button>
   </div>
 </header>
+<div id="quitOverlay" class="hidden"><div><b style="font-size:18px">SuperSync has quit</b><div class="muted" style="margin-top:8px">Open it again from your Applications folder or Start menu.</div></div></div>
 <div id="updOverlay" class="hidden"><div><div class="spin"></div><b id="updOverText">Updating SuperSync…</b><span class="muted" id="updOverSub">This takes a few seconds.</span></div></div>
 
 <main>
@@ -462,7 +482,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     </aside>
     <div class="libmain">
       <div class="lhead">
-        <div class="grow" style="min-width:0">
+        <div class="grow" style="min-width:0;flex-basis:280px">
           <div class="ltitle" id="plName">Collection</div>
           <div class="lmeta" id="plMeta"></div>
         </div>
@@ -553,6 +573,13 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoApply" style="accent-color:var(--accent)"> Add waiting changes to rekordbox as soon as it's closed</label>
         <div class="muted" id="syncState" style="margin-top:8px;font-size:12.5px"></div>
         <div class="muted" style="margin-top:6px;font-size:12.5px">SuperSync never quits rekordbox on its own. While rekordbox is open, changes wait until you close it, or until you click <b>Restart rekordbox &amp; apply</b>.</div>
+      </div>
+      <div class="panel setting" id="appPanel">
+        <h3>App</h3>
+        <label class="row" style="gap:8px;cursor:pointer"><input type="checkbox" id="keepRunning" style="accent-color:var(--accent)"> <span id="keepRunningLabel">Keep running in the background when the window is closed</span></label>
+        <div class="muted" style="font-size:12.5px;margin:4px 0 0 26px" id="keepRunningNote"></div>
+        <label class="row" style="gap:8px;cursor:pointer;margin-top:10px" id="openAtLoginRow"><input type="checkbox" id="openAtLogin" style="accent-color:var(--accent)"> Open SuperSync when you log in (in the background)</label>
+        <div class="row" style="margin-top:14px"><button id="quitBtn">Quit SuperSync</button></div>
       </div>
       <div class="panel setting">
         <h3>Updates</h3>
@@ -978,6 +1005,7 @@ async function refresh() {
   $("#autoSync").value = String(S.autoSyncHours || 0);
   $("#autoApply").checked = !!S.autoApply;
   paintUpdate();
+  paintApp();
   $("#syncState").textContent = (S.lastSync ? "Last synced " + new Date(S.lastSync).toLocaleString() + ". " : "") + (S.nextSync ? "Next " + new Date(S.nextSync).toLocaleString() + "." : "");
   renderPending();
   paintSyncLabels();
@@ -1041,6 +1069,8 @@ const csvCell = s => /[",\n]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : S
 function skeleton(n, cls, cells) {
   return Array.from({ length: n }, (_, i) => `<div class="${cls}">${cells(i)}</div>`).join("");
 }
+// "1 h 46 min" (rounded to the minute first, so never "60 min").
+const fmtHM = sec => { const m = Math.round(sec / 60); return (m >= 60 ? Math.floor(m / 60) + " h " : "") + (m % 60) + " min"; };
 const fmtTime = ms => fmtDur(ms / 1000) || "0:00";
 const searchURL = q => "https://www.beatport.com/search?q=" + encodeURIComponent(q);
 
@@ -1164,7 +1194,7 @@ function renderListHead(animate) {
   $("#plName").textContent = d.name;
   const total = d.rows.reduce((a, r) => a + (r.length || 0), 0);
   const notIn = d.rows.filter(r => !r.id).length;
-  let meta = `${d.rows.length.toLocaleString()} track${d.rows.length === 1 ? "" : "s"} · ${Math.floor(total / 3600) ? Math.floor(total / 3600) + " h " : ""}${Math.round(total % 3600 / 60)} min`;
+  let meta = `${d.rows.length.toLocaleString()} track${d.rows.length === 1 ? "" : "s"} · ${fmtHM(total)}`;
   if (d.sc) meta += ` · synced from <a href="${esc(d.sc.url)}" target="_blank" rel="noopener">${d.sc.source === "youtube" ? "YouTube" : "SoundCloud"}</a>${notIn ? ` · ${notIn} not in your library` : ""}${d.sc.pending ? " · waiting for rekordbox to close" : ""}`;
   $(".libmain").classList.toggle("sc", !!d.sc);
   renderSyncBtn(animate);
@@ -1760,6 +1790,257 @@ document.addEventListener("keydown", e => {
   } else if (e.key === "Escape" && detail) closeDetail();
 });
 addEventListener("resize", drawAll);
+
+// ---------- the app: background, login, quit, links ----------
+const IS_MAC = navigator.platform.startsWith("Mac");
+const REVEAL = IS_MAC ? "Show in Finder" : "Show in Explorer";
+function paintApp() {
+  $("#keepRunning").checked = !!S.keepRunning;
+  $("#keepRunningNote").textContent = IS_MAC
+    ? "SuperSync stays in the menu bar (the ⟳ icon at the top of the screen) so automatic syncs keep going. Quit it from there, or with ⌘Q."
+    : "SuperSync stays in the notification area (next to the clock) so automatic syncs keep going. Quit it from there.";
+  $("#keepRunning").closest("label").classList.toggle("hidden", !S.app);
+  $("#keepRunningNote").classList.toggle("hidden", !S.app);
+  $("#openAtLogin").checked = !!S.openAtLogin;
+  $("#openAtLoginRow").classList.toggle("hidden", !S.canAutorun);
+}
+$("#keepRunning").onchange = e => saveSetting({ keepRunning: e.target.checked });
+$("#openAtLogin").onchange = e => saveSetting({ openAtLogin: e.target.checked });
+async function quitApp() {
+  try { await api("quit", {}); } catch (e) { toast(e.message, "err"); return; }
+  if (!S.app) { const o = $("#quitOverlay"); o.classList.remove("hidden"); anim(o, [{ opacity: 0 }, { opacity: 1 }], { duration: 300 }); }
+}
+$("#quitBtn").onclick = quitApp;
+
+// Web links open in the default browser (the app window doesn't browse).
+function openLink(u) {
+  if (S.app) api("open", { url: u }).catch(e => toast(e.message, "err"));
+  else window.open(u, "_blank", "noopener");
+}
+document.addEventListener("click", e => {
+  const a = e.target.closest("a[href]");
+  if (!a || !/^https?:/i.test(a.href) || new URL(a.href).host === location.host) return;
+  e.preventDefault();
+  openLink(a.href);
+}, true);
+
+async function copyText(t, what) {
+  try { await navigator.clipboard.writeText(t); }
+  catch {
+    const ta = document.createElement("textarea");
+    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove();
+  }
+  toast(what ? `Copied ${what}.` : "Copied.", "ok");
+}
+
+// ---------- right-click menus ----------
+// Every part of the app has its own menu; text fields keep the system's
+// (cut, copy, paste, spelling).
+let ctxEl = null;
+function closeMenu() {
+  if (!ctxEl) return;
+  const el = ctxEl; ctxEl = null;
+  const a = anim(el, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: 120, fill: "forwards" });
+  done(a).then(() => el.remove());
+}
+function showMenu(x, y, items) {
+  closeMenu();
+  items = items.filter(Boolean);
+  while (items[0] === "-") items.shift();
+  while (items.at(-1) === "-") items.pop();
+  items = items.filter((it, i) => !(it === "-" && items[i - 1] === "-"));
+  if (!items.length) return;
+  const el = document.createElement("div");
+  el.className = "ctx";
+  el.setAttribute("role", "menu");
+  const acts = [];
+  el.innerHTML = items.map(it => {
+    if (it === "-") return "<hr>";
+    if (it.header) return `<div class="ch">${esc(it.header)}</div>`;
+    acts.push(it);
+    return `<button role="menuitem" data-a="${acts.length - 1}" class="${it.danger ? "danger" : ""}" ${it.disabled ? "disabled" : ""}><span class="ci">${it.icon || ""}</span><span class="cl">${esc(it.label)}</span>${it.key ? `<span class="ck">${esc(it.key)}</span>` : ""}</button>`;
+  }).join("");
+  document.body.append(el);
+  const r = el.getBoundingClientRect(), W = innerWidth, H = innerHeight;
+  const left = x + r.width > W - 6 ? Math.max(6, x - r.width) : x;
+  const top = y + r.height > H - 6 ? Math.max(6, y - r.height) : y;
+  el.style.left = left + "px"; el.style.top = top + "px";
+  el.style.setProperty("--ox", (x - left) + "px"); el.style.setProperty("--oy", (y - top) + "px");
+  anim(el, [{ opacity: 0, transform: "scale(.94)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: SPRING });
+  el.addEventListener("click", e => {
+    const b = e.target.closest("button[data-a]");
+    if (!b || b.disabled) return;
+    const it = acts[+b.dataset.a];
+    closeMenu();
+    try { const p = it.run?.(); p?.catch?.(err => toast(err.message, "err")); } catch (err) { toast(err.message, "err"); }
+  });
+  el.addEventListener("contextmenu", e => e.preventDefault());
+  ctxEl = el;
+  el._btns = $$("button:not([disabled])", el);
+  el._i = -1;
+}
+function menuKey(e) {
+  if (!ctxEl) return false;
+  const bs = ctxEl._btns;
+  const move = d => { ctxEl._i = (ctxEl._i + d + bs.length) % bs.length; bs.forEach((b, i) => b.classList.toggle("on", i === ctxEl._i)); };
+  if (e.key === "Escape") closeMenu();
+  else if (e.key === "ArrowDown") move(1);
+  else if (e.key === "ArrowUp") move(-1);
+  else if (e.key === "Enter" && ctxEl._i >= 0) bs[ctxEl._i].click();
+  else return false;
+  e.preventDefault(); e.stopPropagation();
+  return true;
+}
+addEventListener("keydown", e => { menuKey(e); }, true);
+addEventListener("pointerdown", e => { if (ctxEl && !ctxEl.contains(e.target)) closeMenu(); }, true);
+addEventListener("blur", closeMenu);
+addEventListener("resize", closeMenu);
+document.addEventListener("scroll", closeMenu, true);
+
+function findPl(id, list = libData?.playlists || []) {
+  for (const p of list) {
+    if (p.id === id) return p;
+    const f = p.children && findPl(id, p.children);
+    if (f) return f;
+  }
+  return null;
+}
+const NAV = () => [
+  "-",
+  { icon: "♪", label: "Library", run: () => selectTab("library") },
+  { icon: "⧉", label: "Duplicates", run: () => selectTab("dupes") },
+  { icon: "↑", label: "Upgrades", run: () => selectTab("upgrades") },
+  { icon: "⚙", label: "Settings", key: IS_MAC ? "⌘," : "", run: () => selectTab("settings") },
+];
+const GENERAL = () => [
+  { icon: "＋", label: "Add SoundCloud or YouTube playlist…", run: () => { selectTab("library"); $("#importBtn").click(); } },
+  { icon: "⟳", label: "Sync all playlists now", run: () => $("#syncAll").click() },
+  { icon: "↻", label: "Rescan music files", run: () => $("#rescan").click() },
+  ...NAV(),
+  "-",
+  { icon: "⟲", label: "Reload", key: IS_MAC ? "⌘R" : "", run: () => location.reload() },
+  { icon: "⏻", label: "Quit SuperSync", key: IS_MAC ? "⌘Q" : "", run: quitApp },
+];
+function trackMenu(r, i) {
+  const pid = playId(r), playing = pid && pid === nowPlaying?.id;
+  const name = [r.artist || r.sc?.uploader, r.title || r.sc?.title].filter(Boolean).join(" – ");
+  const sc = r.sc, st = stepFor(r);
+  const links = (sc?.links || []).slice(0, 3).map(l => ({ icon: l.kind === "download" || l.free ? "⬇" : "$", label: (l.kind === "download" || l.free ? "Free download: " : "Buy on ") + l.label, run: () => openLink(l.url) }));
+  return [
+    { header: r.title || sc?.title || "Track" },
+    pid && { icon: playing && !au.paused ? "❚❚" : "▶", label: playing && !au.paused ? "Pause" : playing ? "Resume" : r.id ? "Play" : "Play from SoundCloud", key: IS_MAC ? "↩" : "Enter", run: () => playing ? togglePlay() : playIndex(i) },
+    pid && nowPlaying && !playing && { icon: "⤵", label: "Play next", run: () => { queue = queue.filter(q => playId(q) !== pid); queue.splice(qi + 1, 0, r); toast("Plays next."); } },
+    { icon: "ⓘ", label: "Show details", run: () => select(i, true) },
+    "-",
+    r.id && !r.stream && !r.missing && { icon: "📁", label: REVEAL, run: () => api("reveal", { id: r.id }) },
+    r.noAccess && { icon: "⚠", label: "Why can't SuperSync read this?", run: () => toast(NOACCESS_TIP) },
+    canRelink(r) && { icon: "🔗", label: "Use another link…", run: () => relink(r) },
+    st?.state === "failed" && { icon: "ⓘ", label: "Why it failed", run: () => toast(st.note || "Unknown error") },
+    ...links,
+    sc && { icon: "☁", label: "Open on SoundCloud", run: () => openLink(sc.url) },
+    { icon: "⌕", label: "Search Beatport", run: () => openLink(searchURL(name || r.title)) },
+    "-",
+    name && { icon: "⎘", label: "Copy “Artist – Title”", run: () => copyText(name, "the name") },
+    r.path && !r.stream && { icon: "⎘", label: "Copy file path", run: () => copyText(r.path, "the file path") },
+    sc && { icon: "⎘", label: "Copy SoundCloud link", run: () => copyText(sc.url, "the link") },
+    r.tier && TIER_LABEL[r.tier] && { icon: "◧", label: `Show only ${TIER_LABEL[r.tier]} tracks`, run: () => { tierFilter = r.tier; $$("#tierChips [data-tier]").forEach(x => x.setAttribute("aria-pressed", x.dataset.tier === tierFilter)); applyFilter(true); } },
+  ];
+}
+function playlistMenu(id) {
+  if (id === "all") return [{ header: "Collection" }, { icon: "▶", label: "Open", run: () => openList("all") }, { icon: "↻", label: "Rescan music files", run: () => $("#rescan").click() }, "-", ...GENERAL().slice(0, 2)];
+  const pend = id.startsWith("sc:"), p = pend ? null : findPl(id);
+  const url = pend ? id.slice(3) : p?.sc, src = p?.source === "youtube" ? "YouTube" : "SoundCloud";
+  const busy = url && syncing.has(url);
+  return [
+    { header: p?.name || "Playlist" },
+    { icon: "▶", label: "Open", run: () => openList(id) },
+    { icon: "▶", label: "Play", run: async () => { await openList(id); const i = cur.view.findIndex(playId); if (i >= 0) playIndex(i); } },
+    url && "-",
+    url && { icon: "⟳", label: busy ? "Syncing…" : `Sync with ${src} now`, disabled: busy, run: () => startSync(url) },
+    url && { icon: "☁", label: `Open on ${src}`, run: () => openLink(url) },
+    url && { icon: "⎘", label: `Copy ${src} link`, run: () => copyText(url, "the link") },
+    pend && { icon: "✓", label: "Add to rekordbox now…", run: applyPending },
+  ];
+}
+function menuFor(t, e) {
+  const sel = String(getSelection() || "").trim();
+  const selItems = sel ? [{ icon: "⎘", label: "Copy", key: IS_MAC ? "⌘C" : "Ctrl+C", run: () => copyText(sel) }, "-"] : [];
+  const link = t.closest("a[href]");
+  if (link && /^https?:/i.test(link.href)) return [...selItems, { header: new URL(link.href).hostname.replace(/^www\./, "") },
+    { icon: "↗", label: "Open link", run: () => openLink(link.href) }, { icon: "⎘", label: "Copy link", run: () => copyText(link.href, "the link") }];
+
+  const row = t.closest("#vlist .trow");
+  if (row) { const i = +row.dataset.i; select(i); return [...selItems, ...trackMenu(cur.view[i], i)]; }
+
+  const node = t.closest("#tree [data-pl]");
+  if (node) return playlistMenu(node.dataset.pl);
+  const folder = t.closest("#tree [data-folder]");
+  if (folder) return [{ header: $(".nm", folder).textContent }, { icon: folder.classList.contains("open") ? "▾" : "▸", label: folder.classList.contains("open") ? "Collapse" : "Expand", run: () => folder.click() }];
+  if (t.closest(".side, #tree")) return [{ header: "Playlists" }, ...GENERAL().slice(0, 2)];
+
+  const cue = t.closest("[data-cue]");
+  if (cue) {
+    const ms = +cue.dataset.cue;
+    return [{ header: "Cue at " + fmtTime(ms) }, { icon: "▶", label: "Play from here", run: () => cue.click() }, { icon: "⎘", label: "Copy time", run: () => copyText(fmtTime(ms), "the time") }];
+  }
+  const wave = t.closest("#dWave, #dZoom");
+  if (wave) return [{ header: "Waveform" }, { icon: "▶", label: "Play from here", run: () => wave.querySelector("canvas").dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: e.clientX, clientY: e.clientY })) }];
+  if (t.closest(".detail")) {
+    const r = cur.view[selIdx];
+    return r ? [...selItems, ...trackMenu(r, selIdx), "-", { icon: "✕", label: "Close details", run: closeDetail }] : selItems;
+  }
+  if (t.closest(".player")) {
+    const np = nowPlaying?.row;
+    return [{ header: np ? np.title || np.sc?.title : "Player" },
+      { icon: au.paused ? "▶" : "❚❚", label: au.paused ? "Play" : "Pause", key: "Space", disabled: !nowPlaying && selIdx < 0, run: togglePlay },
+      { icon: "⏭", label: "Next track", disabled: !queue.length, run: () => step(1) },
+      { icon: "⏮", label: "Previous track", disabled: !queue.length, run: () => au.currentTime > 3 ? (au.currentTime = 0) : step(-1) },
+      np?.id && !np.stream && { icon: "📁", label: REVEAL, run: () => api("reveal", { id: np.id }) },
+      np && { icon: "⎘", label: "Copy “Artist – Title”", run: () => copyText([np.artist, np.title].filter(Boolean).join(" – "), "the name") }];
+  }
+
+  const copy = t.closest("#groups .copy");
+  const group = t.closest("#groups .group");
+  if (group) {
+    const g = groups.find(x => "g" + x.id === group.dataset.k);
+    if (g) {
+      const c = copy && g.copies.find(x => x.path === $("input", copy)?.value);
+      return [...selItems, { header: trackName(g.copies.find(x => x.path === keep[g.id])) },
+        c && c.path !== keep[g.id] && { icon: "★", label: "Keep this copy instead", run: () => { const inp = $("input", copy); inp.checked = true; inp.dispatchEvent(new Event("change", { bubbles: true })); } },
+        c && { icon: "📁", label: REVEAL, run: () => api("reveal", { path: c.path }) },
+        c && { icon: "⎘", label: "Copy file path", run: () => copyText(c.path, "the file path") },
+        "-",
+        { icon: "✓", label: "Clean up this duplicate…", run: () => confirmCleanup([g]) },
+        needsCues(g) && { icon: "◆", label: "Preview cue carry-over", run: () => carryCues([g]) },
+        { icon: "⌕", label: "Search Beatport", run: () => openLink(searchURL(trackName(g.copies[0]))) }];
+    }
+  }
+  const up = t.closest("#upRows .uitem");
+  if (up) {
+    const u = ups.find(x => "u" + x.rel === up.dataset.k);
+    if (u) return [...selItems, { header: trackName(u) },
+      { icon: "📁", label: REVEAL, run: () => api("reveal", { path: u.path }) },
+      "-",
+      u.links?.beatport && { icon: "$", label: "Find on Beatport", run: () => openLink(u.links.beatport) },
+      u.links?.bandcamp && { icon: "$", label: "Find on Bandcamp", run: () => openLink(u.links.bandcamp) },
+      u.links?.traxsource && { icon: "$", label: "Find on Traxsource", run: () => openLink(u.links.traxsource) },
+      "-",
+      { icon: "⎘", label: "Copy “Artist – Title”", run: () => copyText(trackName(u), "the name") },
+      { icon: "⎘", label: "Copy file path", run: () => copyText(u.path, "the file path") }];
+  }
+  if (t.closest("#pendBox")) return [{ header: "Waiting for rekordbox" }, { icon: "✓", label: "Apply now", run: applyPending }, { icon: "✕", label: "Discard", danger: true, run: () => $("#pendDiscard")?.click() }];
+  if (t.closest("header nav")) return NAV().slice(1);
+  if (t.closest("#tierChips")) return [{ header: "Quality" }, { icon: "✕", label: "Show all tracks", disabled: !tierFilter, run: () => { tierFilter = null; $$("#tierChips [data-tier]").forEach(x => x.setAttribute("aria-pressed", x.dataset.tier === tierFilter)); applyFilter(true); } }];
+  return [...selItems, ...GENERAL()];
+}
+document.addEventListener("contextmenu", e => {
+  const t = e.target;
+  // Text fields keep the system menu (cut, copy, paste, spelling).
+  if (t.closest("input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable=true]")) return;
+  e.preventDefault();
+  showMenu(e.clientX, e.clientY, menuFor(t, e));
+});
 
 // ---------- SoundCloud import ----------
 const STEP_IC = { queued: "·", have: "✓", maybe: "?", downloading: "↓", downloaded: "✓", skipped: "–", failed: "✕" };

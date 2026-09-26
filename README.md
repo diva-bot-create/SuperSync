@@ -29,41 +29,51 @@ Get the latest version from the **[Releases page](../../releases/latest)**.
 
 | Your computer | Download |
 | --- | --- |
-| Mac (Apple Silicon or Intel) | `SuperSync-mac.zip` |
-| Windows | `SuperSync-windows.zip` |
+| Mac (Apple Silicon or Intel, macOS 11 or later) | `SuperSync.dmg` |
+| Windows 10 or 11 | `SuperSync-Setup.exe` |
 
-There's nothing to install. Unzip it and double-click **SuperSync**.
-
-**Mac, first time only.** SuperSync isn't registered with Apple yet, so macOS blocks it the first
-time it's opened:
-1. Double-click SuperSync and click **Done** on the warning.
+**Mac:** open `SuperSync.dmg` and drag **SuperSync** into **Applications**. The first time you
+open it, macOS blocks it, because SuperSync isn't registered with Apple yet:
+1. Open SuperSync from Applications and click **Done** on the warning.
 2. Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to
    the SuperSync message.
-3. Double-click SuperSync again and click **Open Anyway**.
+3. Open SuperSync again and click **Open Anyway**.
 
-**Windows, first time only.** If a blue "Windows protected your PC" box appears, click
-**More info → Run anyway**.
+**Windows:** run `SuperSync-Setup.exe`. If a blue "Windows protected your PC" box appears, click
+**More info → Run anyway**. SuperSync installs just for you, so no administrator password is
+needed. It adds shortcuts to the Start menu and desktop, and you can remove it from
+**Settings → Apps** like any other app.
 
-**Updates.** From v0.1.1 on, SuperSync updates itself. When a new version is out, it downloads it
-in the background and an **Update** button appears at the top. Click it and SuperSync restarts
-into the new version in a few seconds. You can turn this off in **Settings → Updates**. If you
-have v0.1, download v0.1.1 once by hand; after that it's automatic.
+**Updates.** SuperSync updates itself. When a new version is out, it downloads it in the
+background and an **Update** button appears at the top. Click it and SuperSync restarts into the
+new version in a few seconds. You can turn this off in **Settings → Updates**. If you have v0.1,
+download the latest version once by hand; after that it's automatic.
 
 ## Getting started
 
-When you open SuperSync, a small window appears (on Mac, a Terminal window). Leave it open while
-you use SuperSync; closing it quits the app. SuperSync itself opens in your web browser. It runs
-only on your computer, and nothing is uploaded anywhere.
+SuperSync opens in its own window. It runs only on your computer, and nothing is uploaded
+anywhere.
 
 1. SuperSync finds your rekordbox library by itself and shows it: your playlists on the left,
    tracks on the right.
 2. Go to **Settings → Download folder** and choose where new downloads should go, for example
    your main music folder.
-3. Click **＋ Add SoundCloud playlist**, paste the playlist link (secret links work too), and
-   watch it fill in, track by track.
+3. Click **＋ Add SoundCloud playlist** and paste the playlist link (secret links work too). The
+   playlist opens straight away, and its tracks fill in as they download. You can play any of
+   them while you wait.
 
 You don't need rekordbox installed to try it. Without rekordbox, SuperSync keeps its own library,
 which rekordbox can import later.
+
+**Running in the background.** Closing the window doesn't quit SuperSync. It keeps going in the
+menu bar on Mac (the ⟳ icon at the top of the screen) or the notification area on Windows (next to
+the clock), so automatic syncs carry on. Open it again from there or from its icon; quit from
+there too, or with ⌘Q on Mac. In **Settings → App** you can switch this off, or have SuperSync
+open by itself (in the background) when you log in.
+
+**Right-click anything.** Tracks, playlists, duplicates, cue points and the player all have their
+own menu: play next, show the file in Finder or Explorer, open the track on SoundCloud, copy its
+name or link, and more.
 
 ## What you can do
 
@@ -82,6 +92,13 @@ What gets downloaded:
   worth replacing.
 - Songs that can't be downloaded at all are listed with a link to the artist's free-download or
   buy page.
+
+If a song can't be downloaded (some SoundCloud tracks are only streamed copy-protected), click
+**Use another link…** next to it. Paste a link to the same song elsewhere: another SoundCloud
+upload, a YouTube video, or an audio file. SuperSync downloads it into its place in the playlist.
+
+Tracks you've added to rekordbox through its **SoundCloud streaming** show a **SOUNDCLOUD** label.
+There's no file for them on your computer, but they still play in SuperSync.
 
 ### See the quality of every track
 
@@ -137,6 +154,11 @@ undo.
 **Why do some downloads say LOW or NORMAL?** That's what SoundCloud streams. Add your SoundCloud
 login in Settings to get artists' original files where they allow downloads. For the rest, the
 buttons next to each track take you to where you can buy or download a better copy.
+
+**Why does a track say NO ACCESS?** The file is there, but your computer isn't letting
+SuperSync read that folder. This is often your Downloads or Documents folder, or an external drive.
+On Mac, allow SuperSync in **System Settings → Privacy & Security → Files & Folders**, then click
+**Rescan**. **MISSING** means the file really isn't where rekordbox expects it any more.
 
 **Where are my settings kept?** On your computer only:
 `~/Library/Application Support/SuperSync/` on Mac, `%AppData%\SuperSync\` on Windows.

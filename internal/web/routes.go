@@ -20,6 +20,7 @@ import (
 	"supersync/internal/anlz"
 	"supersync/internal/app"
 	"supersync/internal/audio"
+	"supersync/internal/autostart"
 	"supersync/internal/rbdb"
 	"supersync/internal/soundcloud"
 	"supersync/internal/update"
@@ -39,6 +40,8 @@ func (s *server) routes(mux *http.ServeMux) {
 			AutoSync    *int    `json:"autoSyncHours"`
 			AutoApply   *bool   `json:"autoApply"`
 			AutoUpdate  *bool   `json:"autoUpdate"`
+			KeepRunning *bool   `json:"keepRunning"`
+			OpenAtLogin *bool   `json:"openAtLogin"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -68,6 +71,17 @@ func (s *server) routes(mux *http.ServeMux) {
 		if err == nil && req.AutoApply != nil {
 			a.Cfg.AutoApply = *req.AutoApply
 			err = a.Cfg.Save()
+		}
+		if err == nil && req.KeepRunning != nil {
+			a.Cfg.QuitOnClose = !*req.KeepRunning
+			window.SetKeepRunning(*req.KeepRunning)
+			err = a.Cfg.Save()
+		}
+		if err == nil && req.OpenAtLogin != nil {
+			if err = autostart.Set(*req.OpenAtLogin); err == nil {
+				a.Cfg.OpenAtLogin = *req.OpenAtLogin
+				err = a.Cfg.Save()
+			}
 		}
 		if err == nil && req.AutoUpdate != nil {
 			a.Cfg.NoAutoUpdate = !*req.AutoUpdate
@@ -768,6 +782,9 @@ type state struct {
 	LastCleanup string          `json:"lastCleanup,omitempty"` // summary, when it can be undone
 	Update      update.Status   `json:"update"`
 	App         bool            `json:"app"` // in SuperSync's own window
+	KeepRunning bool            `json:"keepRunning"`
+	OpenAtLogin bool            `json:"openAtLogin"`
+	CanAutorun  bool            `json:"canAutorun"`
 	AutoUpdate  bool            `json:"autoUpdate"`
 }
 
@@ -787,6 +804,7 @@ func (s *server) state() state {
 	}
 	st.LastSync = a.State.LastSyncTime()
 	st.Update, st.AutoUpdate, st.App = s.upd.Status(), !a.Cfg.NoAutoUpdate, s.inWindow
+	st.KeepRunning, st.OpenAtLogin, st.CanAutorun = !a.Cfg.QuitOnClose, a.Cfg.OpenAtLogin, autostart.Supported()
 	if a.Src != nil {
 		info := a.Src.Info()
 		st.Source = &info

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"supersync/internal/app"
+	"supersync/internal/autostart"
 	"supersync/internal/rbdb"
 	"supersync/internal/update"
 	"supersync/internal/window"
@@ -63,7 +64,8 @@ type progress struct {
 // Serve runs the UI until the process is killed.
 // Serve runs SuperSync's app. With showUI it opens the app window (or, where
 // there's none, a browser tab); without it, it only serves (for testing).
-func Serve(a *app.App, port int, showUI bool, version string) error {
+// With background (opened at login) the window starts hidden.
+func Serve(a *app.App, port int, showUI, background bool, version string) error {
 	if port == 0 {
 		port = defaultPort
 	}
@@ -87,7 +89,7 @@ func Serve(a *app.App, port int, showUI bool, version string) error {
 		if isRunning(port) {
 			u := s.url(port)
 			fmt.Println("SuperSync is already running:", u)
-			if showUI && !s.focusRunning(port) {
+			if showUI && !background && !s.focusRunning(port) {
 				open(u)
 			}
 			return nil
@@ -105,6 +107,9 @@ func Serve(a *app.App, port int, showUI bool, version string) error {
 	}
 	update.Cleanup()
 	s.upd = update.New(version)
+	if a.Cfg.OpenAtLogin {
+		autostart.Set(true) // keep the login item pointing at this copy
+	}
 	go a.Background(nil) // scheduled syncs, auto-apply when rekordbox closes
 	go s.updateLoop()
 
@@ -122,7 +127,8 @@ func Serve(a *app.App, port int, showUI bool, version string) error {
 		go srv.Serve(ln)
 		// The window runs on the main thread until SuperSync quits.
 		if window.Run(window.Options{URL: u, Title: "SuperSync", Width: 1360, Height: 880,
-			DataDir: filepath.Join(app.DataDir(), "WebView2"), OnClose: s.shutdown}) {
+			DataDir: filepath.Join(app.DataDir(), "WebView2"), OnClose: s.shutdown,
+			OnSyncAll: a.SyncAll, KeepRunning: !a.Cfg.QuitOnClose, Hidden: background}) {
 			if s.restarting.Load() {
 				select {} // an update is restarting SuperSync
 			}
@@ -130,12 +136,12 @@ func Serve(a *app.App, port int, showUI bool, version string) error {
 		}
 		s.inWindow = false // no web view on this computer: use the browser
 		fmt.Println("No app window available; opening your browser instead.")
-		if !restarted {
+		if !restarted && !background {
 			open(u)
 		}
 		select {}
 	}
-	if showUI && !restarted {
+	if showUI && !restarted && !background {
 		fmt.Println("Leave this window open while you use it; close it to quit.")
 		go func() { time.Sleep(300 * time.Millisecond); open(u) }()
 	}

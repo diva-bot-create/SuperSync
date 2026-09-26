@@ -10,9 +10,19 @@ scripts/build.sh v0.1      # Mac (universal), Windows and Linux executables in d
 
 ## Releases and self-update
 
-Tag `vX.Y.Z` and run `scripts/build.sh vX.Y.Z`. It also writes `dist/SuperSync-mac.zip` (holding
-`SuperSync`) and `dist/SuperSync-windows.zip` (holding `SuperSync.exe`). Attach both to a GitHub
-release. These names are what `internal/update` looks for.
+Tag `vX.Y.Z` and run `scripts/build.sh vX.Y.Z` on a Mac with Xcode's command line tools and NSIS
+installed (`brew install makensis`). It writes these files:
+
+- the installers `SuperSync.dmg` and `SuperSync-Setup.exe`;
+- `SuperSync-mac.zip` (holding `SuperSync.app`) and `SuperSync-windows.zip` (holding
+  `SuperSync.exe`), which the updater uses.
+
+Attach all four to a GitHub release. The app icon comes from `scripts/icon/main.go`
+(`go run scripts/icon/main.go`, then `iconutil`, as the script's comment shows).
+
+An installed Mac app updates by unpacking the new `SuperSync.app` beside itself and swapping the
+two bundles. A bare executable (v0.1.1, or run from a terminal) takes just the executable from
+inside the bundle. These names are what `internal/update` looks for.
 
 A running copy checks `releases/latest` 5 s after starting and then every 6 h. When it finds a
 newer version, it downloads the zip and checks the size and GitHub's SHA-256 digest. It then
@@ -24,6 +34,20 @@ Windows the old `.exe` is renamed to `.old`, the new one is started in the same 
 `.old` file is removed on the next start. The new process takes over the same port, and the page
 reloads once `/api/state` reports the new version. `SUPERSYNC_UPDATE_API` points the check at
 another releases JSON, for testing.
+
+## The app window, background mode and login item
+
+`internal/window` shows the web UI in a native window. On macOS that's WKWebView through cgo
+(`window_darwin.m`), which also provides a menu bar item and the app menus. On Windows it's Edge
+WebView2 through `github.com/jchv/go-webview2`, which needs no cgo, with a notification-area icon
+drawn with `Shell_NotifyIcon`. On any other system, or if WebView2 is missing, SuperSync falls back
+to the browser. `SUPERSYNC_BROWSER=1` forces the browser.
+
+Closing the window hides it, unless **Keep running** is off. `--background` starts with the window
+hidden, which is how the login item starts it. That login item is `internal/autostart`: a Launch
+Agent on macOS and the `HKCU\…\Run` value on Windows. A second launch asks the running copy to
+show its window (`POST /api/focus`) and then exits. When there's no terminal, output goes to
+`SuperSync.log` in the data folder.
 
 ## Tests
 Go 1.26+, no cgo. `go test ./...` (the audio tests use ffmpeg when it's installed).

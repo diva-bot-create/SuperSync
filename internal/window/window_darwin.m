@@ -2,24 +2,44 @@
 #import <WebKit/WebKit.h>
 
 extern void ssWillTerminate(void);
+extern void ssMenuAction(int action);
+
+static BOOL gKeepRunning = YES; // closing the window hides it; SuperSync stays in the menu bar
 
 @interface SSDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate>
 @property(strong) NSWindow *window;
 @property(strong) WKWebView *web;
 @property(strong) NSURL *home;
+@property(strong) NSStatusItem *status;
 @end
 
 static SSDelegate *gDelegate;
 
 @implementation SSDelegate
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app {
-  return YES;
+  return !gKeepRunning;
+}
+// Closing the window: with "keep running", hide it (and the Dock icon);
+// SuperSync carries on from the menu bar.
+- (BOOL)windowShouldClose:(NSWindow *)w {
+  if (!gKeepRunning) return YES;
+  [w orderOut:nil];
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+  return NO;
+}
+- (void)showWindow:(id)sender {
+  [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+  [self.window makeKeyAndOrderFront:nil];
+  [NSApp activateIgnoringOtherApps:YES];
+}
+- (void)syncAll:(id)sender {
+  ssMenuAction(1);
 }
 - (void)applicationWillTerminate:(NSNotification *)n {
   ssWillTerminate();
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {
-  [self.window makeKeyAndOrderFront:nil];
+  [self showWindow:nil];
   return YES;
 }
 
@@ -122,7 +142,26 @@ static void buildMenu(NSString *name) {
   NSApp.windowsMenu = win;
 }
 
-void ssRun(const char *url, const char *title, int w, int h) {
+static void buildStatusItem(NSString *name) {
+  NSStatusItem *it = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+  NSImage *img = [NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:name];
+  img.template = YES;
+  it.button.image = img;
+  it.button.toolTip = name;
+  NSMenu *m = [NSMenu new];
+  [m addItem:item([@"Open " stringByAppendingString:name], @selector(showWindow:), @"", 0, gDelegate)];
+  [m addItem:item(@"Sync All Playlists Now", @selector(syncAll:), @"", 0, gDelegate)];
+  [m addItem:[NSMenuItem separatorItem]];
+  [m addItem:item([@"Quit " stringByAppendingString:name], @selector(terminate:), @"q", NSEventModifierFlagCommand, nil)];
+  it.menu = m;
+  gDelegate.status = it;
+}
+
+void ssSetKeepRunning(int keep) {
+  gKeepRunning = keep != 0;
+}
+
+void ssRun(const char *url, const char *title, int w, int h, int hidden) {
   @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -131,6 +170,7 @@ void ssRun(const char *url, const char *title, int w, int h) {
     NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     NSString *name = [NSString stringWithUTF8String:title];
     buildMenu(name);
+    buildStatusItem(name);
 
     NSRect frame = NSMakeRect(0, 0, w, h);
     NSWindow *win = [[NSWindow alloc]
@@ -161,16 +201,20 @@ void ssRun(const char *url, const char *title, int w, int h) {
     gDelegate.web = web;
     gDelegate.home = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
     [web loadRequest:[NSURLRequest requestWithURL:gDelegate.home]];
-    [win makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    if (hidden) {
+      // Opened at login: run in the menu bar until the window's wanted.
+      [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    } else {
+      [win makeKeyAndOrderFront:nil];
+      [NSApp activateIgnoringOtherApps:YES];
+    }
     [NSApp run];
   }
 }
 
 void ssFocus(void) {
   dispatch_async(dispatch_get_main_queue(), ^{
-    [gDelegate.window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
+    [gDelegate showWindow:nil];
   });
 }
 
