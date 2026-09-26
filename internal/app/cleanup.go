@@ -9,6 +9,7 @@ import (
 
 	"supersync/internal/analyze"
 	"supersync/internal/rbdb"
+	"supersync/internal/rekordbox"
 )
 
 // CleanupGroup names the copy to keep and the duplicates to fold into it (paths).
@@ -93,6 +94,9 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 			}
 		}
 		for _, x := range g.Extras {
+			if rekordbox.NormPath(x) == rekordbox.NormPath(g.Keep) {
+				continue // the kept file itself: never clean it up
+			}
 			files = append(files, x)
 			ct := a.Col.Lookup(x)
 			if ct == nil {

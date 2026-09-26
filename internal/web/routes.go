@@ -332,8 +332,9 @@ func (s *server) routes(mux *http.ServeMux) {
 		if !decode(w, r, &req) {
 			return
 		}
-		err := a.WithRekordboxClosed(req.Restart, func() error { return a.ResolveMaybe(req.Playlist, req.SCID, req.Same) })
-		reply(w, map[string]bool{"ok": true}, err)
+		var res *app.LinkResult
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { res, err = a.ResolveMaybe(req.Playlist, req.SCID, req.Same); return })
+		reply(w, res, err)
 	})
 	mux.HandleFunc("POST /api/upgrade/swap", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -437,8 +438,9 @@ func (s *server) routes(mux *http.ServeMux) {
 		if !decode(w, r, &req) {
 			return
 		}
-		err := a.WithRekordboxClosed(req.Restart, func() error { return a.LinkEntry(req.Playlist, req.SCID, req.TrackID) })
-		reply(w, map[string]bool{"ok": true}, err)
+		var res *app.LinkResult
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { res, err = a.LinkEntry(req.Playlist, req.SCID, req.TrackID); return })
+		reply(w, res, err)
 	})
 	mux.HandleFunc("POST /api/sc/stop", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

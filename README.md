@@ -121,7 +121,9 @@ the Trash (or wherever **Settings → Clean-up** says). **Undo** puts the librar
 **Songs you already have.** When a playlist syncs, songs already in your library are added as they
 are: nothing is downloaded, and your cues, beatgrid and play history stay. If SuperSync isn't sure
 a file is the same recording (maybe it's another version), the track shows **MAYBE**. Choose
-**Same track** to use your copy, or **Different** to download this one.
+**Same track** to use your copy, or **Different** to download this one. If SuperSync had already
+downloaded its own copy, saying it's the same song (here, or with **It's already in my library…**)
+cleans the two up like a duplicate: the better copy stays, with both copies' cues and playlists.
 
 SuperSync also listens for fakes. A "320 kbps" MP3 or a WAV that was made from a low-quality
 download is labelled as what it really is, and shows up under **Upgrades**.

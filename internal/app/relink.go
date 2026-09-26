@@ -154,10 +154,10 @@ func (a *App) downloadLink(link string, dir string, want *soundcloud.Track) (str
 // ResolveMaybe settles a track SuperSync wasn't sure about. Same: the similar
 // file is this track, and it joins the playlist. Different: it isn't, and the
 // next sync downloads the track. The answer is remembered for later syncs.
-func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) error {
+func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) (*LinkResult, error) {
 	sp := a.scByURLLocked(playlistURL)
 	if sp == nil {
-		return errors.New("that playlist isn't synced any more")
+		return nil, errors.New("that playlist isn't synced any more")
 	}
 	a.State.mu.Lock()
 	var entry *SCEntry
@@ -168,11 +168,11 @@ func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) error {
 	}
 	a.State.mu.Unlock()
 	if entry == nil {
-		return errors.New("that track isn't in the playlist any more")
+		return nil, errors.New("that track isn't in the playlist any more")
 	}
 	if !same {
 		if err := a.Decide(scID, ""); err != nil {
-			return err
+			return nil, err
 		}
 		// A track that was matched to the wrong file: take that file out of
 		// the synced playlist (it stays in the collection).
@@ -184,21 +184,41 @@ func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) error {
 		a.State.mu.Unlock()
 		if wrong != "" && pid != "" {
 			if _, err := a.Src.EditPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: []string{wrong}}); err != nil {
-				return err
+				return nil, err
 			}
 			a.rebuild()
 		}
-		return nil
+		return &LinkResult{}, nil
 	}
 	path := entry.Maybe
 	if path == "" {
-		return errors.New("there's no similar file to use")
+		return nil, errors.New("there's no similar file to use")
 	}
 	if err := a.Decide(scID, path); err != nil {
-		return err
+		return nil, err
+	}
+	// If this playlist entry already has its own copy (SuperSync downloaded
+	// it), that's the same song: keep the better copy and fold in the other,
+	// like a duplicate clean-up.
+	res := &LinkResult{}
+	a.State.mu.Lock()
+	current, file := entry.TrackID, entry.File
+	a.State.mu.Unlock()
+	if tr := a.TrackByPath(path); tr != nil && current != "" && current != tr.ID {
+		kept, err := a.foldSame(current, tr.ID)
+		if err != nil {
+			return nil, err
+		}
+		res.Folded = true
+		if kt := a.Src.Track(kept); kt != nil {
+			path = kt.Path
+		}
+	} else if current == "" && file != "" && file != path && exists(file) {
+		a.Quarantine([]string{file}) // a download waiting for rekordbox: the library copy wins
+		res.Removed = true
 	}
 	a.State.mu.Lock()
-	entry.Status, entry.Note = "have", ""
+	entry.Status, entry.Note, entry.File, entry.Maybe = "have", "", "", ""
 	if tr := a.TrackByPath(path); tr != nil {
 		entry.TrackID = tr.ID
 	} else {
@@ -213,7 +233,7 @@ func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) error {
 	}
 	err := a.applyChange(scChange(folder, sp.Title, sp.URL, entries, false))
 	if errors.Is(err, rbdb.ErrRunning) {
-		return nil // added when rekordbox closes (it's waiting in the sidebar)
+		return res, nil // added when rekordbox closes (it's waiting in the sidebar)
 	}
-	return err
+	return res, err
 }

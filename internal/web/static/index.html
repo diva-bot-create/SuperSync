@@ -2154,7 +2154,7 @@ function pickLibraryTrack(r) {
       try {
         const res = await withRekordbox("add it to the playlist", restart => api("sc/link", { playlist: url, scId: r.sc.id, trackId: t.id, restart }));
         if (!res) return;
-        toast("Linked your copy.", "ok");
+        linkedToast(res, "Linked your copy.");
         await loadLibrary(); openList(cur.id, { quiet: true });
       } catch (err) { toast(err.message, "err"); }
     });
@@ -2265,13 +2265,25 @@ async function swapUpgrade(r, path) {
 }
 
 // ---------- tracks SuperSync wasn't sure about, and missing files ----------
+// After the user says a track is one they already have: if SuperSync had its
+// own copy too, the worse one was cleaned up like a duplicate (with Undo).
+function linkedToast(res, msg) {
+  if (res?.folded) {
+    toast(`${msg} It was the same song as SuperSync's download, so the better copy was kept (with the other's cues and playlists) and the other file is ${cleanupWhere(true)}.`, "ok", { label: "Undo", run: async () => {
+      try { const u = await withRekordbox("undo the clean-up", restart => api("dupes/undo-cleanup", { restart })); if (u) { toast(u.note ? "Put back. " + u.note : "Put back.", "ok"); await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); } }
+      catch (e) { toast(e.message, "err"); }
+    } });
+    dupesLoaded = false; upsLoaded = false;
+  } else if (res?.removed) toast(`${msg} SuperSync's own download of it is ${cleanupWhere(true)}.`, "ok");
+  else toast(msg, "ok");
+}
 async function resolveMaybe(r, same) {
   const url = cur.data?.sc?.url;
   if (!url) return;
   try {
     const res = await withRekordbox(same ? "add the track" : "save your answer", restart => api("sc/maybe", { playlist: url, scId: r.sc.id, same, restart }));
     if (!res) return;
-    if (same) { toast("Added your copy to the playlist.", "ok"); await loadLibrary(); openList(cur.id, { quiet: true }); }
+    if (same) { linkedToast(res, "Added your copy to the playlist."); await loadLibrary(); openList(cur.id, { quiet: true }); }
     else { toast("Got it. Downloading it now…"); await loadLibrary(); await openList(cur.id, { quiet: true }); startSync(url); }
   } catch (e) { toast(e.message, "err"); }
 }
