@@ -25,22 +25,18 @@ var contentsPrefix = regexp.MustCompile(`^/contents_[^/]+/`)
 
 var resolvingCloud atomic.Bool
 
-// applyCloudPaths points Cloud Library Sync tracks at files already found
-// for them, and reports whether any haven't been looked for yet. Called with
-// a.mu held.
-func (a *App) applyCloudPathsLocked() (unsearched bool) {
+// cloudUnsearchedLocked reports whether any Cloud Library Sync track's file
+// hasn't been looked for yet. Called with a.mu held.
+func (a *App) cloudUnsearchedLocked() bool {
 	for _, t := range a.Src.Tracks() {
 		if !t.Cloud || exists(t.Path) {
 			continue
 		}
-		p, tried := a.cloudFound[t.StoredPath]
-		if p != "" && exists(p) {
-			t.Path = p
-		} else if !tried {
-			unsearched = true
+		if _, tried := a.cloudFound[t.StoredPath]; !tried {
+			return true
 		}
 	}
-	return unsearched
+	return false
 }
 
 // resolveCloudFiles searches the download folder and the Music folder for
@@ -79,13 +75,18 @@ func (a *App) resolveCloudFiles() {
 		found[t.StoredPath] = idx.find(t)
 	}
 	a.mu.Lock()
-	if a.cloudFound == nil {
-		a.cloudFound = map[string]string{}
+	all := map[string]string{}
+	for k, v := range a.cloudFound {
+		all[k] = v
 	}
 	for k, v := range found {
-		a.cloudFound[k] = v
+		all[k] = v
 	}
+	a.cloudFound = all
 	a.mu.Unlock()
+	if fs, ok := a.Src.(interface{ SetFound(map[string]string) }); ok {
+		fs.SetFound(all)
+	}
 	a.rebuild()
 	for _, v := range found {
 		if v != "" {

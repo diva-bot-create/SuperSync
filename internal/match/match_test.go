@@ -1,6 +1,9 @@
 package match
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 type side struct{ artist, title string }
 
@@ -86,4 +89,24 @@ func TestArtistTitle(t *testing.T) {
 			t.Errorf("%q\n  got  %q / %q\n  want %q / %q", c.raw, a, ti, c.artist, c.title)
 		}
 	}
+}
+
+// Tokens runs from several goroutines at once (a library load and the cloud
+// file search); it must not share state between them.
+func TestTokensConcurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				got := Tokens("Gesaffelstein, ROSALÍA - A Palé (Gesaffelstein Remix)")
+				if len(got) == 0 || got[0] != "gesaffelstein" {
+					t.Errorf("Tokens = %v", got)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

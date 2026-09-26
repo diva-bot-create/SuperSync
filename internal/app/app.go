@@ -143,7 +143,7 @@ func (a *App) rebuild() {
 		a.Col = nil
 		return
 	}
-	if a.applyCloudPathsLocked() {
+	if a.cloudUnsearchedLocked() {
 		go a.resolveCloudFiles()
 	}
 	pls := a.Src.TrackPlaylists()

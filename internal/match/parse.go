@@ -55,11 +55,12 @@ var dashRe = regexp.MustCompile(`\s+[-–—~]\s+|\s[-–—]|[-–—]\s`)
 var trackNumRe = regexp.MustCompile(`^\s*(\d{1,3}|[a-d]\d)\s*[\.\-_)]\s*`)
 var nonWord = regexp.MustCompile(`[^\p{L}\p{N}]+`)
 
-var foldTransform = transform.Chain(norm.NFKD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
-
 // Tokens lowercases, strips accents and punctuation, and drops stopwords.
+// It's called from several goroutines at once (library loads and background
+// searches), so each call makes its own transformer: a transform.Chain keeps
+// state and isn't safe to share.
 func Tokens(s string) []string {
-	s, _, _ = transform.String(foldTransform, s)
+	s, _, _ = transform.String(transform.Chain(norm.NFKD, runes.Remove(runes.In(unicode.Mn)), norm.NFC), s)
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "'", "")
 	s = strings.ReplaceAll(s, "’", "")

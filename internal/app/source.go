@@ -119,6 +119,35 @@ type rbSource struct {
 	playlists  []*rbdb.Playlist
 	trackPls   map[string][]string
 	backupRoot string
+	// found: where Cloud Library Sync tracks' files turned out to be (stored
+	// path -> file). Applied to copies of the tracks, never in place: other
+	// goroutines may be reading the tracks they already have.
+	found map[string]string
+}
+
+// SetFound records where Cloud Library Sync tracks' files are, and swaps in
+// updated copies of those tracks.
+func (s *rbSource) SetFound(found map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.found = found
+	s.tracks, s.byID = withFound(s.tracks, found)
+}
+
+// withFound returns the tracks with found files applied, copying (not
+// changing) any track that needs a new path.
+func withFound(tracks []*rbdb.Track, found map[string]string) ([]*rbdb.Track, map[string]*rbdb.Track) {
+	out := make([]*rbdb.Track, len(tracks))
+	byID := make(map[string]*rbdb.Track, len(tracks))
+	for i, t := range tracks {
+		if p := found[t.StoredPath]; t.Cloud && p != "" && p != t.Path && !exists(t.Path) {
+			c := *t
+			c.Path = p
+			t = &c
+		}
+		out[i], byID[t.ID] = t, t
+	}
+	return out, byID
 }
 
 func openRekordbox(loc *rbdb.Location, backupRoot string) (*rbSource, error) {
@@ -142,11 +171,8 @@ func (s *rbSource) load() error {
 		return err
 	}
 	tp, _ := db.TrackPlaylists()
-	byID := make(map[string]*rbdb.Track, len(tracks))
-	for _, t := range tracks {
-		byID[t.ID] = t
-	}
 	s.mu.Lock()
+	tracks, byID := withFound(tracks, s.found)
 	old := s.db
 	s.db, s.tracks, s.byID, s.playlists, s.trackPls = db, tracks, byID, pls, tp
 	s.mu.Unlock()
