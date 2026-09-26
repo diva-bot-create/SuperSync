@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,6 +30,8 @@ func (s *server) routes(mux *http.ServeMux) {
 			RekordboxDB *string `json:"rekordboxDb"`
 			SCToken     *string `json:"scToken"`
 			MinKbps     *int    `json:"minKbps"`
+			AutoSync    *int    `json:"autoSyncHours"`
+			AutoApply   *bool   `json:"autoApply"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -49,6 +52,14 @@ func (s *server) routes(mux *http.ServeMux) {
 		}
 		if err == nil && req.MinKbps != nil && *req.MinKbps > 0 {
 			a.Cfg.MinKbps = *req.MinKbps
+			err = a.Cfg.Save()
+		}
+		if err == nil && req.AutoSync != nil && *req.AutoSync >= 0 {
+			a.Cfg.AutoSyncHours = *req.AutoSync
+			err = a.Cfg.Save()
+		}
+		if err == nil && req.AutoApply != nil {
+			a.Cfg.AutoApply = *req.AutoApply
 			err = a.Cfg.Save()
 		}
 		reply(w, s.state(), err)
@@ -186,8 +197,40 @@ func (s *server) routes(mux *http.ServeMux) {
 		reply(w, j.Snapshot(), nil)
 	})
 	mux.HandleFunc("POST /api/pending/apply", func(w http.ResponseWriter, r *http.Request) {
-		n, err := a.ApplyPending()
+		var req struct {
+			Restart bool `json:"restart"`
+		}
+		decodeOptional(r, &req)
+		var n int
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { n, err = a.ApplyPending(); return })
 		reply(w, map[string]int{"applied": n}, err)
+	})
+	mux.HandleFunc("POST /api/sync/all", func(w http.ResponseWriter, r *http.Request) {
+		go a.SyncAll()
+		reply(w, map[string]bool{"ok": true}, nil)
+	})
+	mux.HandleFunc("POST /api/dupes/cleanup", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Groups  []app.CleanupGroup `json:"groups"`
+			Restart bool               `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if s.busy() {
+			reply(w, nil, errors.New("still scanning"))
+			return
+		}
+		var res *app.CleanupResult
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { res, err = a.CleanupDuplicates(req.Groups); return })
+		reply(w, res, err)
+	})
+	mux.HandleFunc("POST /api/dupes/undo-cleanup", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Restart bool `json:"restart"`
+		}
+		decodeOptional(r, &req)
+		reply(w, map[string]bool{"ok": true}, a.WithRekordboxClosed(req.Restart, a.UndoCleanup))
 	})
 	mux.HandleFunc("POST /api/pending/discard", func(w http.ResponseWriter, r *http.Request) {
 		a.DiscardPending()
@@ -321,6 +364,13 @@ func source(p *app.SCPlaylist) string {
 		return "soundcloud"
 	}
 	return p.Source
+}
+
+// decodeOptional reads a JSON body if there is one.
+func decodeOptional(r *http.Request, v any) {
+	if r.ContentLength != 0 {
+		json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20)).Decode(v)
+	}
 }
 
 func orStr(s, d string) string {
@@ -513,6 +563,11 @@ type state struct {
 	Quarantined int             `json:"quarantined"`
 	Pending     []*app.Change   `json:"pending"`
 	Syncing     []string        `json:"syncing"` // links being imported/synced now
+	AutoSync    int             `json:"autoSyncHours"`
+	AutoApply   bool            `json:"autoApply"`
+	LastSync    time.Time       `json:"lastSync,omitzero"`
+	NextSync    time.Time       `json:"nextSync,omitzero"`
+	LastCleanup string          `json:"lastCleanup,omitempty"` // summary, when it can be undone
 }
 
 func (s *server) state() state {
@@ -525,6 +580,11 @@ func (s *server) state() state {
 	if st.Syncing = a.Syncing(); st.Syncing == nil {
 		st.Syncing = []string{}
 	}
+	st.AutoSync, st.AutoApply, st.NextSync = a.Cfg.AutoSyncHours, a.Cfg.AutoApply, a.NextSync()
+	if lc := a.State.Last(); lc != nil {
+		st.LastCleanup = lc.Summary
+	}
+	st.LastSync = a.State.LastSyncTime()
 	if a.Src != nil {
 		info := a.Src.Info()
 		st.Source = &info

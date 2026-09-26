@@ -1,0 +1,93 @@
+package app
+
+import (
+	"log"
+	"sync/atomic"
+	"time"
+
+	"supersync/internal/rbdb"
+)
+
+// Background is SuperSync's timekeeper while the app is open: it re-syncs
+// playlists on the chosen schedule and, if allowed, applies waiting changes
+// once rekordbox has been closed for a little while. It never quits or
+// restarts rekordbox itself.
+func (a *App) Background(stop <-chan struct{}) {
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
+	var closedSince time.Time
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+		}
+		a.Refresh()
+
+		if a.Cfg.AutoApply && len(a.PendingChanges()) > 0 && a.Src != nil {
+			if rbdb.Running() {
+				closedSince = time.Time{}
+			} else if closedSince.IsZero() {
+				closedSince = time.Now()
+			} else if time.Since(closedSince) > 10*time.Second {
+				if n, err := a.ApplyPending(); err != nil {
+					log.Printf("auto-apply: %v", err)
+				} else if n > 0 {
+					log.Printf("auto-apply: added %d waiting change(s) to rekordbox", n)
+				}
+			}
+		}
+
+		if a.Cfg.AutoSyncHours > 0 && a.Cfg.MusicDir != "" && len(a.Syncing()) == 0 {
+			a.State.mu.Lock()
+			due := time.Since(a.State.LastSync) >= time.Duration(a.Cfg.AutoSyncHours)*time.Hour
+			a.State.mu.Unlock()
+			if due {
+				go a.SyncAll() // runs alongside, so auto-apply keeps working during a long sync
+			}
+		}
+	}
+}
+
+var syncingAll atomic.Bool
+
+// SyncAll re-syncs every playlist that came from SoundCloud or YouTube, one
+// after another, and records when it ran. A second call while one is running
+// does nothing.
+func (a *App) SyncAll() {
+	if !syncingAll.CompareAndSwap(false, true) {
+		return
+	}
+	defer syncingAll.Store(false)
+	a.State.mu.Lock()
+	a.State.LastSync = time.Now()
+	a.State.save()
+	a.State.mu.Unlock()
+	for _, p := range a.SCPlaylists() {
+		j, err := a.ImportPlaylist(p.URL)
+		if err != nil {
+			log.Printf("auto-sync %s: %v", p.Title, err)
+			continue
+		}
+		for j.running() {
+			time.Sleep(time.Second)
+		}
+		if v := j.Snapshot(); v.Status == "error" {
+			log.Printf("auto-sync %s: %s", p.Title, v.Message)
+		}
+	}
+}
+
+// NextSync is when the schedule will next run (zero if it's off).
+func (a *App) NextSync() time.Time {
+	if a.Cfg.AutoSyncHours <= 0 {
+		return time.Time{}
+	}
+	a.State.mu.Lock()
+	defer a.State.mu.Unlock()
+	next := a.State.LastSync.Add(time.Duration(a.Cfg.AutoSyncHours) * time.Hour)
+	if now := time.Now(); next.Before(now) {
+		return now // due now: starts within the next check
+	}
+	return next
+}

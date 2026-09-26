@@ -79,11 +79,31 @@ in your browser, on your rekordbox library.
 4. In a synced playlist, rows below UHQ, and tracks you don't have yet, show where to get a
    better copy. **⬇ SoundCloud** opens the track's page (log in, then ⋯ → Download file). The other
    buttons go to the free-download page or store the uploader linked.
-5. **Duplicates → Carry over cues**: when the copy you're keeping has no cues but another copy
-   does, SuperSync decodes both and measures the offset between them. Different masters often
-   start a few ms apart, and an extended mix can start a minute earlier. It checks the offset at
-   three points through the track, then gives you an XML to import. Different edits (a section
-   added or cut in the middle) are detected and skipped, since one shift can't fit every cue.
+5. **Duplicates → Clean up**: folds each extra copy into the one you keep, right in your
+   library. Playlists and history switch over, play counts add up, rating/colour/comment carry
+   across, and if the kept copy has no cues they're copied from the extra. SuperSync decodes
+   both files and measures the offset between them (different masters often start a few ms
+   apart; an extended mix can start a minute earlier), checking it at three points through the
+   track. Different edits (a section added or cut in the middle) are detected and their cues left
+   alone. The extra files move to `_SuperSync Duplicates`. **Undo clean-up** restores the library
+   backup and moves the files back.
+6. **Settings → Automatic sync**: re-sync every SoundCloud/YouTube playlist every hour, 6 hours
+   or day while SuperSync is open, or **Sync all now**.
+
+### rekordbox being open
+
+rekordbox holds its library open and would overwrite outside changes, so SuperSync only writes
+while it's closed. Changes made while it's open wait in the sidebar. You can:
+
+- close rekordbox and click **Apply now**;
+- turn on **Add waiting changes as soon as it's closed** in Settings; or
+- click **Restart rekordbox & apply** (or **Restart rekordbox & clean up**). SuperSync asks
+  rekordbox to quit the normal way, as ⌘Q would. It never force-quits, because that could
+  corrupt the library mid-write. It then writes the changes and opens rekordbox again, which
+  reads the new library as it starts. If rekordbox shows a dialog instead of quitting, nothing is
+  written. Don't use this mid-set.
+
+SuperSync never quits rekordbox on its own.
 
 Everything also works from a terminal: `supersync help`.
 
@@ -92,7 +112,7 @@ supersync library                                   # the library and its playli
 supersync import https://soundcloud.com/you/sets/friday
 supersync apply                                     # finish an import that waited for rekordbox to close
 supersync scan                                      # read files: quality tiers, upscale checks
-supersync dupes                                     # list; add --move to move the extras
+supersync dupes                                     # list duplicates; add --move to move the extras
 supersync cues --xml cues.xml                       # carry cue points to the copies you keep
 supersync upgrades --min-kbps 320
 ```

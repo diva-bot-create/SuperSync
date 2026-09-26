@@ -30,6 +30,10 @@ type Config struct {
 	// that offer SoundCloud's download button download as the artist's original file.
 	SCToken string `json:"scToken,omitempty"`
 	MinKbps int    `json:"minKbps"`
+	// AutoSyncHours re-syncs every SoundCloud/YouTube playlist this often (0 = off).
+	AutoSyncHours int `json:"autoSyncHours"`
+	// AutoApply writes waiting changes as soon as rekordbox has been closed.
+	AutoApply bool `json:"autoApply"`
 	// Decisions records the user's answers for uncertain matches:
 	// "sc:<track id>" -> absolute path of the owned file, or "none".
 	Decisions map[string]string `json:"decisions,omitempty"`

@@ -469,12 +469,12 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <div class="row" style="align-items:flex-start">
       <div class="grow">
         <h2>Duplicates</h2>
-        <p class="sub">Tracks that appear more than once. The best-quality copy is selected to keep; extras move to a <span class="mono">_SuperSync Duplicates</span> folder inside your music folder, so nothing is deleted.</p>
+        <p class="sub">Tracks that appear more than once. The best-quality copy is selected to keep. <b>Clean up</b> folds the extras into it in your library: its playlists and history switch over, play counts add up, and your cues move across, lined up to the new file. The extra files move to a <span class="mono">_SuperSync Duplicates</span> folder, so nothing is deleted, and it can all be undone.</p>
       </div>
       <div class="row">
         <button id="undoBtn" class="hidden">Restore moved files</button>
-        <button id="cuesAll" class="hidden">Carry over cues</button>
-        <button class="primary" id="moveAll" disabled>Move all extras</button>
+        <button id="cuesAll" class="hidden">Preview cue carry-over</button>
+        <button class="primary" id="moveAll" disabled>Clean up all</button>
       </div>
     </div>
     <div id="dupeErr" class="err hidden"></div>
@@ -510,7 +510,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         <div class="row"><button id="pickDb">Choose rekordbox library…</button><button class="link" id="autoDb">Find automatically</button><button id="addFolder" class="hidden">Add music folder to library</button></div>
         <ul class="steps" style="margin-top:12px">
           <li>SuperSync reads rekordbox's library directly, so it's always current.</li>
-          <li>It only writes (new playlists and downloaded tracks) while rekordbox is closed, and backs the library up first, keeping the last 10 backups.</li>
+          <li>It only writes (new playlists, downloaded tracks, duplicate clean-ups) while rekordbox is closed, and backs the library up first, keeping the last 10 backups.</li>
         </ul>
       </div>
       <div class="panel setting">
@@ -529,6 +529,17 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         </ol>
         <div class="row" style="margin-top:12px"><input type="password" id="scToken" placeholder="Paste oauth_token…" autocomplete="off" style="flex:1;min-width:220px"><button id="saveToken">Save</button><button class="link" id="clearToken">Remove</button></div>
         <div class="muted" id="tokenState" style="margin-top:6px;font-size:12.5px"></div>
+      </div>
+      <div class="panel setting">
+        <h3>Automatic sync</h3>
+        <div class="muted">Keeps playlists added from SoundCloud or YouTube up to date while SuperSync is open: new tracks are downloaded and added to the same playlist.</div>
+        <div class="row" style="margin-top:12px">
+          <select id="autoSync"><option value="0">Off</option><option value="1">Every hour</option><option value="6">Every 6 hours</option><option value="24">Once a day</option></select>
+          <button id="syncAll">Sync all now</button>
+        </div>
+        <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoApply" style="accent-color:var(--accent)"> Add waiting changes to rekordbox as soon as it's closed</label>
+        <div class="muted" id="syncState" style="margin-top:8px;font-size:12.5px"></div>
+        <div class="muted" style="margin-top:6px;font-size:12.5px">SuperSync never quits rekordbox on its own. While rekordbox is open, changes wait until you close it, or until you click <b>Restart rekordbox &amp; apply</b>.</div>
       </div>
       <div class="panel setting">
         <h3>Quality bar</h3>
@@ -893,12 +904,16 @@ async function refresh() {
   $("#addFolder").classList.toggle("hidden", src?.kind !== "supersync");
   $("#tokenState").textContent = S.hasToken ? "Saved. Downloads use the artist's original file where SoundCloud allows it." : "Not set. Downloads use the stream.";
   $("#minKbps").value = String(S.minKbps);
-  const undo = $("#undoBtn");
-  if (!!S.quarantined === undo.classList.contains("hidden")) {
-    undo.classList.toggle("hidden", !S.quarantined);
-    if (S.quarantined) anim(undo, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
+  const undo = $("#undoBtn"), canUndo = !!(S.lastCleanup || S.quarantined);
+  if (canUndo === undo.classList.contains("hidden")) {
+    undo.classList.toggle("hidden", !canUndo);
+    if (canUndo) anim(undo, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
   }
-  undo.textContent = `Restore moved files (${S.quarantined})`;
+  undo.textContent = S.lastCleanup ? "Undo clean-up" : `Restore moved files (${S.quarantined})`;
+  undo.title = S.lastCleanup || "";
+  $("#autoSync").value = String(S.autoSyncHours || 0);
+  $("#autoApply").checked = !!S.autoApply;
+  $("#syncState").textContent = (S.lastSync ? "Last synced " + new Date(S.lastSync).toLocaleString() + ". " : "") + (S.nextSync ? "Next " + new Date(S.nextSync).toLocaleString() + "." : "");
   renderPending();
   paintSyncLabels();
   if (libData && src) {
@@ -1685,9 +1700,12 @@ function finishJob(j) {
   }
 }
 async function applyPending() {
+  const running = S.source?.kind === "rekordbox" && S.source.running;
+  if (running && !confirm("rekordbox is open. Let SuperSync ask it to quit, add the changes, and open it again? (Don't do this mid-set.)")) return;
   setBusy(+1);
+  if (running) toast("Asking rekordbox to quit…");
   try {
-    const r = await api("pending/apply", {});
+    const r = await api("pending/apply", { restart: running });
     toast(`Added ${r.applied} playlist${r.applied === 1 ? "" : "s"} to rekordbox.`, "ok");
     if ($("#importDlg").open && importJob) { importJob.status = "done"; closeDlg($("#importDlg")); }
     await loadLibrary();
@@ -1699,7 +1717,7 @@ function renderPending() {
   const box = $("#pendBox"), p = S.pending || [];
   const show = p.length > 0;
   if (show) box.innerHTML = `<b>${p.length} change${p.length > 1 ? "s" : ""} waiting</b> for rekordbox to close: ${p.map(c => esc(c.label)).join(", ")}.
-    <div class="row"><button class="small" id="pendApply" ${S.source?.running ? "disabled title='Close rekordbox first'" : ""}>Apply now</button><button class="link" id="pendDiscard">Discard</button></div>`;
+    <div class="row"><button class="small" id="pendApply">${S.source?.running ? "Restart rekordbox & apply" : "Apply now"}</button><button class="link" id="pendDiscard">Discard</button></div>`;
   if (show === box.classList.contains("hidden")) {
     box.classList.toggle("hidden", !show);
     if (show) anim(box, [{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 1, transform: "none" }]);
@@ -1731,14 +1749,14 @@ loaders.dupes = async () => {
 };
 function extras(g) { return g.copies.filter(c => c.path !== keep[g.id]); }
 function warnHtml(g) {
-  return needsCues(g) ? `<div class="warn">⚠ Your rekordbox cues are on a copy you're moving. <button class="small" data-cues="${g.id}">Carry cues over to the kept copy</button></div>` : "";
+  return needsCues(g) ? `<div class="warn">Your cues are on a copy that isn't the one being kept. Clean-up lines them up and moves them across. <button class="link" data-cues="${g.id}">Preview</button></div>` : "";
 }
 function groupHtml(g) {
   const k = g.copies.find(c => c.path === keep[g.id]);
   const n = extras(g).length;
   return `<h3><span class="gname">${esc(trackName(k))}</span>
       ${g.lengthsDiffer ? `<span class="badge maybe" style="text-transform:none">different lengths</span>` : ""}
-      <span class="grow"></span><button class="small" data-move="${g.id}">Move ${n} extra${n > 1 ? "s" : ""}</button></h3>
+      <span class="grow"></span><button class="small" data-move="${g.id}">Clean up</button></h3>
     ${g.copies.map(c => `<label class="copy ${c.path === keep[g.id] ? "" : "drop"}">
       <input type="radio" name="k-${g.id}" value="${esc(c.path)}" ${c.path === keep[g.id] ? "checked" : ""}>
       <span>${qBadge({ quality: qLabel(c), lossless: c.lossless, inRekordbox: c.inRekordbox, cues: c.cues, upscaled: c.upscaled, trueKbps: c.trueKbps })}</span>
@@ -1753,16 +1771,16 @@ function renderDupesChrome() {
   const n = auto.reduce((a, g) => a + extras(g).length, 0);
   const bytes = auto.reduce((a, g) => a + extras(g).reduce((b, c) => b + c.size, 0), 0);
   $("#moveAll").disabled = !n;
-  $("#moveAll").textContent = n ? `Move all extras (${n} file${n > 1 ? "s" : ""}, ${fmtSize(bytes)})` : "Move all extras";
+  $("#moveAll").textContent = n ? `Clean up all (${auto.length} track${auto.length === 1 ? "" : "s"}, ${fmtSize(bytes)} freed)` : "Clean up all";
   const cueGroups = groups.filter(needsCues);
   const cues = $("#cuesAll");
   if (!!cueGroups.length === cues.classList.contains("hidden")) {
     cues.classList.toggle("hidden", !cueGroups.length);
     if (cueGroups.length) anim(cues, [{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "none" }], { easing: SPRING });
   }
-  cues.textContent = `Carry over cues (${cueGroups.length})`;
+  cues.textContent = `Preview cue carry-over (${cueGroups.length})`;
   const skipped = groups.length - auto.length;
-  $("#dupeNote").textContent = `${skipped} group${skipped === 1 ? " has" : "s have"} copies of different lengths (maybe a radio edit and an extended mix). "Move all" skips those; use the buttons on each one if they really are duplicates.`;
+  $("#dupeNote").textContent = `${skipped} group${skipped === 1 ? " has" : "s have"} copies of different lengths (maybe a radio edit and an extended mix). "Clean up all" skips those; use the button on each one if they really are duplicates.`;
   showErr($("#dupeNote"), skipped ? $("#dupeNote").textContent : null);
 }
 function renderDupes() {
@@ -1780,7 +1798,7 @@ $("#groups").addEventListener("change", e => {
   const k = g.copies.find(c => c.path === keep[g.id]);
   const name = $(".gname", el);
   if (name.textContent !== trackName(k)) { name.textContent = trackName(k); anim(name, [{ opacity: 0 }, { opacity: 1 }]); }
-  $("[data-move]", el).textContent = `Move ${extras(g).length} extra${extras(g).length > 1 ? "s" : ""}`;
+
   const w = $(".gwarn", el), html = warnHtml(g);
   if (w.innerHTML !== html) smoothHeight(el, () => { w.innerHTML = html; }).then(() => html && anim(w, [{ opacity: 0 }, { opacity: 1 }]));
   el._html = groupHtml(g);
@@ -1856,37 +1874,66 @@ $("#groups").addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.reveal) { e.preventDefault(); api("reveal", { path: b.dataset.reveal }).catch(err => toast(err.message, "err")); }
-  if (b.dataset.move) { const g = groups.find(g => g.id === b.dataset.move); confirmMove(extras(g)); }
+  if (b.dataset.move) confirmCleanup([groups.find(g => g.id === b.dataset.move)]);
   if (b.dataset.cues) { e.preventDefault(); carryCues([groups.find(g => g.id === b.dataset.cues)]); }
 });
-$("#moveAll").onclick = () => confirmMove(groups.filter(g => !g.lengthsDiffer).flatMap(extras));
-function confirmMove(files) {
+$("#moveAll").onclick = () => confirmCleanup(groups.filter(g => !g.lengthsDiffer));
+// Confirm, then fold the groups' extras into their keepers. If rekordbox is
+// open, offer to restart it (a normal quit, never a force-kill).
+function confirmCleanup(gs) {
+  gs = gs.filter(Boolean);
+  if (!gs.length) return;
   const d = $("#confirm");
-  $("#confTitle").textContent = `Move ${files.length} file${files.length > 1 ? "s" : ""} to “_SuperSync Duplicates”?`;
-  $("#confBody").innerHTML = `<p class="muted" style="margin-top:0">They stay inside your music folder and can be put back with “Restore moved files”. If rekordbox had any of these in its collection, it will show them as missing. Use the kept copy instead.</p>
-    <ul class="mono" style="padding-left:18px">${files.map(f => `<li>${esc(f.rel)}</li>`).join("")}</ul>`;
+  const files = gs.flatMap(extras);
+  const running = S.source?.kind === "rekordbox" && S.source.running;
+  $("#confTitle").textContent = `Clean up ${gs.length} duplicate${gs.length > 1 ? "s" : ""}?`;
+  $("#confBody").innerHTML = `<ul class="steps" style="margin-top:0">
+      <li>Playlists and history that use an extra copy switch to the kept one. Play counts add up; rating, colour and comment carry over.</li>
+      <li>Where the kept copy has no cues, they're copied from the extra, lined up by audio. Different edits are left alone.</li>
+      <li>The extras leave your library, and their files move to <span class="mono">_SuperSync Duplicates</span>.</li>
+      <li>Your library is backed up first; <b>Undo clean-up</b> puts everything back.</li></ul>
+    <ul class="mono" style="padding-left:18px;font-size:12px">${files.map(f => `<li>${esc(f.rel)}</li>`).join("")}</ul>
+    ${running ? `<div class="warn">rekordbox is open. SuperSync can ask it to quit, clean up, then open it again. Don't do this mid-set.</div>` : ""}`;
+  $("#confYes").textContent = running ? "Restart rekordbox & clean up" : "Clean up";
   openDlg(d);
   $("#confNo").onclick = () => closeDlg(d);
   $("#confYes").onclick = async () => {
     await closeDlg(d);
     setBusy(+1);
+    if (running) toast("Asking rekordbox to quit…");
     try {
-      const r = await api("quarantine", { paths: files.map(f => f.path) });
-      // Fold away the groups that are now resolved before the list refreshes.
-      const moved = new Set(files.map(f => f.path));
-      const els = groups.filter(g => g.copies.some(c => moved.has(c.path))).map(g => $(`[data-k="g${g.id}"]`)).filter(Boolean);
+      const r = await api("dupes/cleanup", { groups: gs.map(g => ({ keep: keep[g.id], extras: extras(g).map(c => c.path) })), restart: running });
+      const els = gs.map(g => $(`[data-k="g${g.id}"]`)).filter(Boolean);
       await Promise.all(els.map(collapse));
-      toast(`Moved ${r.moved} file${r.moved === 1 ? "" : "s"}.`, "ok");
+      const cues = r.groups.filter(x => x.cuesCopied).length;
+      toast(`Cleaned up ${gs.length} duplicate${gs.length > 1 ? "s" : ""}${cues ? `, cues carried over on ${cues}` : ""}.`, "ok");
+      r.groups.filter(x => x.note).forEach(x => toast(x.note));
     } catch (e) { toast(e.message, "err"); }
     finally { setBusy(-1); }
-    refresh();
+    dupesLoaded = false;
+    await refresh();
+    loaders.dupes();
+    if (libData) { await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); }
   };
 }
 $("#undoBtn").onclick = async () => {
   setBusy(+1);
-  try { const r = await api("undo", {}); toast(`Restored ${r.restored} file${r.restored === 1 ? "" : "s"}.`, "ok"); } catch (e) { toast(e.message, "err"); }
+  const running = S.source?.kind === "rekordbox" && S.source.running;
+  try {
+    if (S.lastCleanup) {
+      if (running && !confirm("rekordbox is open. Let SuperSync quit it, undo the clean-up, and open it again?")) return;
+      await api("dupes/undo-cleanup", { restart: running });
+      toast("Clean-up undone: library and files are back.", "ok");
+    } else {
+      const r = await api("undo", {});
+      toast(`Restored ${r.restored} file${r.restored === 1 ? "" : "s"}.`, "ok");
+    }
+  } catch (e) { toast(e.message, "err"); }
   finally { setBusy(-1); }
-  refresh();
+  dupesLoaded = false;
+  await refresh();
+  if (curTab === "dupes") loaders.dupes();
+  if (libData) { await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true }); }
 };
 
 // ---------- upgrades ----------
@@ -1927,6 +1974,9 @@ async function saveSetting(body) {
   try { await api("settings", body); await refresh(); return true; } catch (e) { toast(e.message, "err"); return false; }
 }
 $("#minKbps").onchange = async e => { await saveSetting({ minKbps: Number(e.target.value) }); upsLoaded = false; };
+$("#autoSync").onchange = e => saveSetting({ autoSyncHours: Number(e.target.value) });
+$("#autoApply").onchange = e => saveSetting({ autoApply: e.target.checked });
+$("#syncAll").onclick = async () => { try { await api("sync/all", {}); toast("Syncing all playlists…"); setTimeout(refresh, 800); } catch (e) { toast(e.message, "err"); } };
 $("#pickMusic").onclick = async () => {
   const dir = await pick("Choose your download folder", S.musicDir);
   if (dir && await saveSetting({ musicDir: dir })) toast("Downloads will go to " + dir, "ok");

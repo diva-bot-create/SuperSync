@@ -489,3 +489,26 @@ func xmlWellFormed(s string) error {
 		}
 	}
 }
+
+func readDirSorted(root string) ([]string, error) {
+	es, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range es {
+		if e.IsDir() {
+			out = append(out, filepath.Join(root, e.Name()))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func decryptCheck(p string) ([]byte, []byte, error) { return sqlcipher.Decrypt(p, Passphrase) }
+
+func removeIfExists(p string) { os.Remove(p) }
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+func rename(a, b string) error { return os.Rename(a, b) }

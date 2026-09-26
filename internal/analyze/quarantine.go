@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,4 +153,58 @@ func moveFile(src, dst string) error {
 		os.Chtimes(dst, st.ModTime(), st.ModTime())
 	}
 	return os.Remove(src)
+}
+
+// UndoMoves puts back specific moved files (e.g. from one clean-up) and
+// drops them from the undo log.
+func UndoMoves(moves []Move) (int, error) {
+	restored := 0
+	for i := len(moves) - 1; i >= 0; i-- {
+		m := moves[i]
+		if _, err := os.Stat(m.To); err != nil {
+			continue
+		}
+		if _, err := os.Stat(m.From); err == nil {
+			continue // something's there again; leave both alone
+		}
+		os.MkdirAll(filepath.Dir(m.From), 0o755)
+		if err := moveFile(m.To, m.From); err != nil {
+			return restored, err
+		}
+		restored++
+	}
+	if len(moves) > 0 {
+		pruneLog(filepath.Dir(logPathFor(moves[0].To)), moves)
+	}
+	return restored, nil
+}
+
+// logPathFor walks up from a quarantined file to its moves.jsonl.
+func logPathFor(p string) string {
+	for d := filepath.Dir(p); d != filepath.Dir(d); d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "moves.jsonl")); err == nil {
+			return filepath.Join(d, "moves.jsonl")
+		}
+	}
+	return ""
+}
+
+func pruneLog(qdir string, done []Move) {
+	b, err := os.ReadFile(logPath(qdir))
+	if err != nil {
+		return
+	}
+	gone := map[string]bool{}
+	for _, m := range done {
+		gone[m.To] = true
+	}
+	var keep []byte
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		var m Move
+		if len(line) == 0 || json.Unmarshal(line, &m) != nil || gone[m.To] {
+			continue
+		}
+		keep = append(append(keep, line...), '\n')
+	}
+	os.WriteFile(logPath(qdir), keep, 0o644)
 }

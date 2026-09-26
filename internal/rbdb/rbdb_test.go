@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"supersync/internal/sqlcipher"
 )
 
@@ -137,3 +139,95 @@ func TestReadAndWrite(t *testing.T) {
 		t.Errorf("masterPlaylists6.xml:\n%s", x)
 	}
 }
+
+func TestMerge(t *testing.T) {
+	loc := library(t)
+	music := t.TempDir()
+	rip, master := filepath.Join(music, "rip.mp3"), filepath.Join(music, "master.wav")
+	os.WriteFile(rip, []byte("x"), 0o644)
+	os.WriteFile(master, []byte("x"), 0o644)
+
+	tx, err := Begin(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extra, _ := tx.AddTrack(NewTrack{Path: rip, Title: "Tune", Artist: "A"})
+	keep, _ := tx.AddTrack(NewTrack{Path: master, Title: "Tune", Artist: "A"})
+	p1, _ := tx.CreatePlaylist("Only rip", "root", false)
+	p2, _ := tx.CreatePlaylist("Both", "root", false)
+	tx.AddToPlaylist(p1, extra)
+	tx.AddToPlaylist(p2, keep, extra)
+	tx.tx.Exec(`UPDATE djmdContent SET DJPlayCount = 5, Rating = 204, Commnt = 'banger' WHERE ID = ?`, extra)
+	tx.tx.Exec(`UPDATE djmdContent SET DJPlayCount = 2 WHERE ID = ?`, keep)
+	for _, c := range []map[string]any{
+		{"InMsec": 16825, "OutMsec": -1, "Kind": 1, "ColorTableIndex": 5, "Comment": "Drop"},
+		{"InMsec": 80825, "OutMsec": 88825, "Kind": 0, "ColorTableIndex": 0, "Comment": "Loop"},
+		{"InMsec": 300, "OutMsec": -1, "Kind": 2, "Comment": "too early"},
+	} {
+		c["ID"], c["ContentID"], c["UUID"], c["created_at"], c["updated_at"] = uuidLike(), extra, uuidLike(), tx.now, tx.now
+		if err := tx.insert("djmdCue", c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.insert("djmdSongHistory", map[string]any{"ID": uuidLike(), "HistoryID": "1", "ContentID": extra, "TrackNo": 1, "UUID": uuidLike(), "created_at": tx.now, "updated_at": tx.now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Commit(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err = Begin(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shift := -0.825
+	if err := tx.Merge(keep, extra, &shift); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Commit(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	db.SQL.QueryRow(`SELECT COUNT(*) FROM djmdContent WHERE ID = ?`, extra).Scan(&n)
+	if n != 0 {
+		t.Error("duplicate still in the collection")
+	}
+	if ids, _ := db.PlaylistTrackIDs(p1); len(ids) != 1 || ids[0] != keep {
+		t.Errorf("playlist with only the rip: %v", ids)
+	}
+	if ids, _ := db.PlaylistTrackIDs(p2); len(ids) != 1 || ids[0] != keep {
+		t.Errorf("playlist with both: %v", ids)
+	}
+	var tn int
+	db.SQL.QueryRow(`SELECT TrackNo FROM djmdSongPlaylist WHERE PlaylistID = ?`, p2).Scan(&tn)
+	if tn != 1 {
+		t.Errorf("track numbers not closed up: %d", tn)
+	}
+	cues, _ := db.Cues(keep)
+	if len(cues) != 2 || cues[0].InMs != 16000 || cues[0].Hot != 1 || cues[0].Comment != "Drop" || cues[0].Color != 5 ||
+		cues[1].InMs != 80000 || cues[1].OutMs != 88000 {
+		t.Errorf("cues on kept track: %+v", cues)
+	}
+	var plays, rating int
+	var comment string
+	db.SQL.QueryRow(`SELECT DJPlayCount, Rating, Commnt FROM djmdContent WHERE ID = ?`, keep).Scan(&plays, &rating, &comment)
+	if plays != 7 || rating != 204 || comment != "banger" {
+		t.Errorf("merged stats: plays %d rating %d comment %q", plays, rating, comment)
+	}
+	db.SQL.QueryRow(`SELECT COUNT(*) FROM djmdSongHistory WHERE ContentID = ?`, keep).Scan(&n)
+	if n != 1 {
+		t.Errorf("history not moved")
+	}
+	db.SQL.QueryRow(`SELECT COUNT(*) FROM djmdCue WHERE ContentID = ?`, extra).Scan(&n)
+	if n != 0 {
+		t.Errorf("duplicate's cues left behind")
+	}
+}
+
+func uuidLike() string { return uuid.NewString() }

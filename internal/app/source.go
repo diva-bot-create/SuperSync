@@ -32,6 +32,11 @@ type Source interface {
 	TrackPlaylists() map[string][]string
 	// Apply makes the changes; for rekordbox it fails with rbdb.ErrRunning while rekordbox is open.
 	Apply(c *Change) (*Applied, error)
+	// Merge folds duplicate entries into the ones kept (see rbdb.Tx.Merge) and
+	// returns the backup taken first.
+	Merge(ops []MergeOp) (backup string, err error)
+	// Restore puts a backup from Merge/Apply back.
+	Restore(backup string) error
 	// Refresh reloads if the library changed on disk; reports whether it did.
 	Refresh() bool
 	Close()
@@ -63,6 +68,13 @@ type ChangeItem struct {
 	TrackID string         `json:"trackId,omitempty"` // already in the library
 	New     *rbdb.NewTrack `json:"new,omitempty"`     // a file to add
 	SCID    int64          `json:"scId,omitempty"`
+}
+
+// MergeOp folds Extra into Keep; CueShift (seconds) carries Extra's cues over
+// when Keep has none, nil to leave cues alone.
+type MergeOp struct {
+	Keep, Extra string
+	CueShift    *float64
 }
 
 type Applied struct {
@@ -252,6 +264,31 @@ func (s *rbSource) Apply(c *Change) (*Applied, error) {
 		return nil, err
 	}
 	return res, s.load()
+}
+
+func (s *rbSource) Merge(ops []MergeOp) (string, error) {
+	tx, err := rbdb.Begin(s.loc)
+	if err != nil {
+		return "", err
+	}
+	for _, op := range ops {
+		if err := tx.Merge(op.Keep, op.Extra, op.CueShift); err != nil {
+			tx.Rollback()
+			return "", err
+		}
+	}
+	backup, err := tx.Commit(s.backupRoot)
+	if err != nil {
+		return "", err
+	}
+	return backup, s.load()
+}
+
+func (s *rbSource) Restore(backup string) error {
+	if err := rbdb.Restore(s.loc, backup); err != nil {
+		return err
+	}
+	return s.load()
 }
 
 func countPlaylists(ps []*rbdb.Playlist) int {
@@ -507,6 +544,96 @@ func (s *xmlSource) Apply(c *Change) (*Applied, error) {
 		return nil, err
 	}
 	return res, s.load(path)
+}
+
+func (s *xmlSource) Merge(ops []MergeOp) (string, error) {
+	s.mu.Lock()
+	lib := s.lib
+	backup := filepath.Join(DataDir(), "library backups", time.Now().Format("2006-01-02 15.04.05"))
+	os.MkdirAll(backup, 0o755)
+	if b, err := os.ReadFile(lib.Path); err == nil {
+		os.WriteFile(filepath.Join(backup, filepath.Base(lib.Path)), b, 0o644)
+	}
+	for _, op := range ops {
+		keep, extra := lib.Track(op.Keep), lib.Track(op.Extra)
+		if keep == nil || extra == nil {
+			continue
+		}
+		var walk func(n *rekordbox.LibNode)
+		walk = func(n *rekordbox.LibNode) {
+			var out []string
+			seen := map[string]bool{}
+			for _, k := range n.Keys {
+				if k == op.Extra {
+					k = op.Keep
+				}
+				if !seen[k] {
+					seen[k] = true
+					out = append(out, k)
+				}
+			}
+			n.Keys = out
+			for _, c := range n.Children {
+				walk(c)
+			}
+		}
+		walk(lib.Root)
+		if op.CueShift != nil && len(keep.Marks) == 0 {
+			for _, m := range extra.Marks {
+				attrs := append(m.Attrs[:0:0], m.Attrs...)
+				ok := true
+				for _, k := range []string{"Start", "End"} {
+					if v, err := strconv.ParseFloat(rekordbox.Elem{Attrs: attrs}.Get(k), 64); err == nil {
+						v += *op.CueShift
+						if k == "Start" && v < -0.005 {
+							ok = false
+						}
+						attrs = rekordbox.SetAttr(attrs, k, strconv.FormatFloat(math.Max(0, v), 'f', 3, 64))
+					}
+				}
+				if ok {
+					keep.Marks = append(keep.Marks, rekordbox.Elem{Attrs: attrs})
+				}
+			}
+		}
+		plays, _ := strconv.Atoi(keep.Get("PlayCount"))
+		more, _ := strconv.Atoi(extra.Get("PlayCount"))
+		keep.Attrs = rekordbox.SetAttr(keep.Attrs, "PlayCount", strconv.Itoa(plays+more))
+		for _, k := range []string{"Rating", "Comments", "Colour"} {
+			if keep.Get(k) == "" || keep.Get(k) == "0" {
+				if v := extra.Get(k); v != "" {
+					keep.Attrs = rekordbox.SetAttr(keep.Attrs, k, v)
+				}
+			}
+		}
+		for i, t := range lib.Tracks {
+			if t == extra {
+				lib.Tracks = append(lib.Tracks[:i], lib.Tracks[i+1:]...)
+				break
+			}
+		}
+	}
+	err := lib.Save()
+	path := lib.Path
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	return backup, s.load(path)
+}
+
+func (s *xmlSource) Restore(backup string) error {
+	s.mu.RLock()
+	path := s.lib.Path
+	s.mu.RUnlock()
+	b, err := os.ReadFile(filepath.Join(backup, filepath.Base(path)))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return err
+	}
+	return s.load(path)
 }
 
 // ---------------- opening ----------------

@@ -27,6 +27,8 @@ type State struct {
 	mu          sync.Mutex
 	SCPlaylists []*SCPlaylist `json:"scPlaylists"`
 	Pending     []*Change     `json:"pending"`
+	LastCleanup *LastCleanup  `json:"lastCleanup,omitempty"`
+	LastSync    time.Time     `json:"lastSync,omitempty"`
 }
 
 // SCPlaylist links a SoundCloud playlist to a library playlist.

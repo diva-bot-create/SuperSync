@@ -50,6 +50,7 @@ func Serve(a *app.App, port int, openBrowser bool, version string) error {
 		port = defaultPort
 	}
 	s := &server{app: a, token: loadToken(), version: version}
+	go a.Background(nil) // scheduled syncs, auto-apply when rekordbox closes
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
