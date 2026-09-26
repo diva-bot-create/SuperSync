@@ -445,6 +445,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
   body::before, body::after, header::after { animation: none !important; }
 }
 /* Right-click menus */
+.ctx[popover] { inset: auto; margin: 0; overflow: visible; color: inherit; }
 .ctx { position: fixed; z-index: 200; min-width: 230px; max-width: 340px; padding: 5px; border-radius: 12px;
   background: color-mix(in srgb, var(--panel-2) 86%, transparent); backdrop-filter: saturate(1.6) blur(22px); -webkit-backdrop-filter: saturate(1.6) blur(22px);
   border: 1px solid color-mix(in srgb, var(--line) 80%, white 6%); box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35);
@@ -1451,8 +1452,10 @@ function refreshBadges() {
 $("#vlist").addEventListener("scroll", () => requestAnimationFrame(() => renderRows(false)), { passive: true });
 addEventListener("resize", () => { if (cur.data) renderRows(false); });
 
+const relinking = new Set(); // SoundCloud ids being downloaded from a link the user gave
 function tierBadge(r) {
   if (!r.id) {
+    if (r.sc && relinking.has(r.sc.id)) return `<span class="tier normal dl" title="Downloading from the link you gave"><i style="width:40%"></i>…</span>`;
     const st = stepFor(r);
     if (st?.state === "downloading") return `<span class="tier normal dl" title="Downloading"><i style="width:${st.progress > 0 ? Math.round(st.progress * 100) : 30}%"></i>${st.progress > 0 ? Math.round(st.progress * 100) + "%" : "…"}</span>`;
     if (st?.state === "queued") return `<span class="tier none" title="Waiting to download">QUEUED</span>`;
@@ -2246,7 +2249,7 @@ function closeMenu() {
   const a = anim(el, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: 120, fill: "forwards" });
   done(a).then(() => el.remove());
 }
-function showMenu(x, y, items) {
+function showMenu(x, y, items, from) {
   closeMenu();
   items = items.filter(Boolean);
   while (items[0] === "-") items.shift();
@@ -2263,7 +2266,13 @@ function showMenu(x, y, items) {
     acts.push(it);
     return `<button role="menuitem" data-a="${acts.length - 1}" class="${it.danger ? "danger" : ""}" ${it.disabled ? "disabled" : ""}><span class="ci">${it.icon || ""}</span><span class="cl">${esc(it.label)}</span>${it.key ? `<span class="ck">${esc(it.key)}</span>` : ""}</button>`;
   }).join("");
-  document.body.append(el);
+  // Open dialogs sit in the browser's top layer, above the page: the menu
+  // must go there too (as a popover), or it opens behind the dialog.
+  // Inside a modal dialog it must also be *in* the dialog: everything
+  // outside a modal is inert (unclickable), even the top layer.
+  const dlg = from?.closest?.("dialog[open]") || [...document.querySelectorAll("dialog[open]")].pop();
+  (dlg || document.body).append(el);
+  if (el.showPopover) { el.popover = "manual"; el.showPopover(); }
   const r = el.getBoundingClientRect(), W = innerWidth, H = innerHeight;
   const left = x + r.width > W - 6 ? Math.max(6, x - r.width) : x;
   const top = y + r.height > H - 6 ? Math.max(6, y - r.height) : y;
@@ -2514,7 +2523,7 @@ document.addEventListener("contextmenu", e => {
   const t = e.target;
   e.preventDefault();
   const field = t.closest("input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea");
-  showMenu(e.clientX, e.clientY, field ? fieldMenu(field) : t.closest("select") ? [] : menuFor(t, e));
+  showMenu(e.clientX, e.clientY, field ? fieldMenu(field) : t.closest("select") ? [] : menuFor(t, e), t);
 });
 
 // ---------- SoundCloud import ----------
@@ -2620,20 +2629,25 @@ function relink(r) {
   openDlg(d);
   setTimeout(() => $("#relinkUrl")?.focus(), 80);
   $("#confNo").onclick = () => closeDlg(d);
+  // The download runs in the background: the dialog closes straight away
+  // and the track's row shows it downloading.
   const go = async () => {
     const link = $("#relinkUrl").value.trim();
     if (!link) return;
-    const b = $("#confYes");
-    b.disabled = true; morphButton(b, '<span class="spin"></span>Downloading');
+    relinking.add(r.sc.id);
+    refreshBadges();
+    closeDlg(d);
+    toast(`Downloading “${r.sc.title}” from your link…`);
     try {
       const res = await api("sc/relink", { playlist: url, scId: r.sc.id, url: link });
-      await closeDlg(d);
       toast(res.waiting ? `Downloaded “${r.sc.title}”. It joins the playlist when rekordbox closes.` : `Added “${r.sc.title}” to the playlist.`, "ok");
       await loadLibrary();
-      openList(res.playlistId || cur.id, { quiet: true });
+      if (cur.data?.sc?.url === url) openList(res.playlistId || cur.id, { quiet: true });
     } catch (e) {
-      toast(e.message, "err");
-      b.disabled = false; morphButton(b, "Download");
+      toast(`Couldn't download “${r.sc.title}”: ${e.message}`, "err", { label: "Try another link", run: () => relink(r) });
+    } finally {
+      relinking.delete(r.sc.id);
+      refreshBadges();
     }
   };
   $("#confYes").onclick = go;
