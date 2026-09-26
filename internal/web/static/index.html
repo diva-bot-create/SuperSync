@@ -1535,8 +1535,16 @@ function stepFor(r) {
   const job = cur.data?.sc && syncing.get(cur.data.sc.url);
   return job && r.sc ? (job.steps || []).find(x => x.scId === r.sc.id) : null;
 }
+// Loosely the same title? ("Too Easy" vs "Too Easy (Extended Mix)")
+function sameTitle(a, b) {
+  const n = s => String(s || "").toLowerCase().replace(/\(.*?\)|\[.*?\]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const x = n(a), y = n(b);
+  return !x || !y || x.includes(y) || y.includes(x);
+}
 function rowHtml(r, i) {
-  const sub = [r.artist, r.album].filter(Boolean).join(" · ");
+  let sub = [r.artist, r.album].filter(Boolean).join(" · ");
+  // In a synced playlist, say when your file's name differs from SoundCloud's.
+  if (r.id && r.sc && !sameTitle(r.title, r.sc.title)) sub += `${sub ? " · " : ""}on SoundCloud: “${r.sc.title}”`;
   const bpm = r.bpm ? (r.bpm % 1 ? r.bpm.toFixed(1) : r.bpm.toFixed(0)) : "";
   return `<div class="n"><span class="nn">${i + 1}</span>${playId(r) ? `<button class="pl" data-play="${i}" aria-label="Play" tabindex="-1">▶</button>` : ""}</div>
     <div style="min-width:0"><div class="tt">${esc(r.title || r.sc?.title || "")}</div><div class="ta">${esc(sub)}${r.cues ? ` <span class="cuedot" title="${r.cues} cue${r.cues === 1 ? "" : "s"}">◆</span>` : ""}</div></div>
@@ -2139,7 +2147,7 @@ async function resolveMaybe(r, same) {
     const res = await withRekordbox(same ? "add the track" : "save your answer", restart => api("sc/maybe", { playlist: url, scId: r.sc.id, same, restart }));
     if (!res) return;
     if (same) { toast("Added your copy to the playlist.", "ok"); await loadLibrary(); openList(cur.id, { quiet: true }); }
-    else { toast("Got it. Downloading it now…"); startSync(url); }
+    else { toast("Got it. Downloading it now…"); await loadLibrary(); await openList(cur.id, { quiet: true }); startSync(url); }
   } catch (e) { toast(e.message, "err"); }
 }
 async function findMoved() {
@@ -2286,6 +2294,7 @@ function trackMenu(r, i) {
     r.id && { icon: "＋", label: "Add to playlist…", run: () => addToPlaylist([r.id]) },
     r.id && cur.id && cur.id !== "all" && !cur.id.startsWith("sc:") && { icon: "−", label: "Remove from this playlist", run: () => removeFromPlaylist(cur.id, [r.id]) },
     !r.id && r.status === "maybe" && { icon: "✓", label: "It's the same track (use my copy)", run: () => resolveMaybe(r, true) },
+    r.id && sc && cur.data?.sc && r.status === "have" && { icon: "✕", label: "Not this track (download the SoundCloud one)", run: () => resolveMaybe(r, false) },
     !r.id && r.status === "maybe" && { icon: "⬇", label: "It's different (download this one)", run: () => resolveMaybe(r, false) },
     "-",
     r.id && !r.stream && { icon: "📁", label: REVEAL, run: () => api("reveal", { id: r.id }).catch(e => toast(e.message)) },

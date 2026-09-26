@@ -159,10 +159,20 @@ func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) error {
 		if err := a.Decide(scID, ""); err != nil {
 			return err
 		}
+		// A track that was matched to the wrong file: take that file out of
+		// the synced playlist (it stays in the collection).
 		a.State.mu.Lock()
-		entry.Status, entry.Maybe, entry.Note = "missing", "", ""
+		wrong := entry.TrackID
+		entry.Status, entry.Maybe, entry.Note, entry.TrackID, entry.File = "missing", "", "", "", ""
 		a.State.save()
+		pid := sp.PlaylistID
 		a.State.mu.Unlock()
+		if wrong != "" && pid != "" {
+			if _, err := a.Src.EditPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: []string{wrong}}); err != nil {
+				return err
+			}
+			a.rebuild()
+		}
 		return nil
 	}
 	path := entry.Maybe
