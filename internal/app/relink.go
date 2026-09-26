@@ -59,6 +59,9 @@ func (a *App) Relink(playlistURL string, scID int64, link string) (*RelinkResult
 
 	a.State.mu.Lock()
 	entry.Status, entry.File, entry.TrackID, entry.Note = "downloaded", path, "", "from "+hostOf(link)
+	if !strings.Contains(link, "://") {
+		entry.Note = "from a file you chose"
+	}
 	entries := append([]*SCEntry(nil), sp.Entries...)
 	a.State.save()
 	a.State.mu.Unlock()
@@ -84,6 +87,18 @@ func hostOf(link string) string {
 
 // downloadLink fetches a track from a SoundCloud, YouTube or direct audio link.
 func (a *App) downloadLink(link string, dir string, want *soundcloud.Track) (string, error) {
+	// A file on this computer (one the user downloaded from a download page):
+	// move it into the playlist's folder.
+	if st, err := os.Stat(link); err == nil && !st.IsDir() {
+		if _, err := audio.Read(link); err != nil || !audio.IsAudio(link) {
+			return "", errors.New("that file isn't audio SuperSync can read")
+		}
+		dst := freePath(filepath.Join(dir, filepath.Base(link)))
+		if err := moveFile(link, dst); err != nil {
+			return "", err
+		}
+		return dst, nil
+	}
 	if !strings.Contains(link, "://") {
 		link = "https://" + link
 	}
@@ -131,7 +146,7 @@ func (a *App) downloadLink(link string, dir string, want *soundcloud.Track) (str
 	}
 	if _, err := audio.Read(path); err != nil || !audio.IsAudio(path) {
 		os.Remove(path)
-		return "", fmt.Errorf("that link is a web page, not an audio file. If it's a download page, download the file yourself, put it in your music folder and click Rescan")
+		return "", fmt.Errorf("that link is a web page, not an audio file. If it's a download page, download the file from it, then use Choose file… to pick what you downloaded")
 	}
 	return path, nil
 }

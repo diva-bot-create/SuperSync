@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"supersync/internal/library"
 )
 
 // MissingReason explains why a track's file can't be found at path.
@@ -43,19 +44,33 @@ type Moved struct {
 	To    string `json:"to"`
 }
 
-// FindMoved looks for missing tracks' files among the scanned music files:
-// the same file name (and size, when there are several).
+// FindMoved looks for missing tracks' files in the library's other folders,
+// the download folder and the Music folder: the same file name (and size,
+// when there are several).
 func (a *App) FindMoved() ([]Moved, error) {
 	if a.Src == nil {
 		return nil, ErrNoSource
 	}
-	if a.Lib == nil {
-		return nil, errors.New("scan your music first (Rescan)")
-	}
 	byName := map[string][]string{}
-	for _, t := range a.Lib.Tracks {
-		n := strings.ToLower(filepath.Base(t.Path))
-		byName[n] = append(byName[n], t.Path)
+	seen := map[string]bool{}
+	addFile := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			n := strings.ToLower(filepath.Base(p))
+			byName[n] = append(byName[n], p)
+		}
+	}
+	if a.Lib != nil {
+		for _, t := range a.Lib.Tracks {
+			addFile(t.Path)
+		}
+	}
+	for _, d := range cloudSearchDirs(a.Cfg.MusicDir) {
+		if l, err := library.Scan(d, nil); err == nil {
+			for _, t := range l.Tracks {
+				addFile(t.Path)
+			}
+		}
 	}
 	var out []Moved
 	for _, t := range a.Src.Tracks() {

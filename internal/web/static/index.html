@@ -272,7 +272,7 @@ button.tier[aria-pressed=true] { border-color: currentColor; }
 #search { width: 220px; }
 .thead, .trow { display: grid; grid-template-columns: 44px minmax(0, 1fr) 58px 52px 52px 88px var(--getw, 0px); gap: 10px; align-items: center; padding: 0 20px 0 14px; }
 .thead { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 650; height: 30px; border-bottom: 1px solid var(--line); }
-.libmain.sc { --getw: 230px; }
+/* --getw is set to fit the widest button in the list (fitGetColumn). */
 .c-n, .c-bpm, .c-key, .c-time { text-align: right; font-variant-numeric: tabular-nums; }
 .vlist { flex: 1; overflow: auto; position: relative; outline: none; }
 .vspace { position: relative; }
@@ -358,7 +358,7 @@ button.getb.none:hover { opacity: 1; color: var(--text); }
   #detailBody { width: auto; }
   .thead, .trow { grid-template-columns: 30px minmax(0, 1fr) 70px var(--getw, 0px); }
   .c-bpm, .c-key, .c-time, .trow .num { display: none; }
-  .libmain.sc { --getw: 110px; }
+
   .pinfo { width: 120px; } #pVol, #pPrev, #pNext { display: none; }
 }
 
@@ -1265,6 +1265,7 @@ function renderListHead(animate) {
   if (noAccess) meta += ` · <span class="warnish" title="${esc(NOACCESS_TIP)}">${noAccess} file${noAccess === 1 ? "" : "s"} SuperSync isn't allowed to read</span>`;
   if (gone) meta += ` · ${gone} file${gone === 1 ? "" : "s"} not found (<button class="link" id="findMoved">find them</button>)`;
   $("#plMeta").innerHTML = meta;
+  fitGetColumn();
   $("#findMoved")?.addEventListener("click", findMoved);
   $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
     + [["need", "none", "NEED", "Not in your library yet: the next sync downloads them"],
@@ -1415,6 +1416,25 @@ function paintRow(el, r, i) {
   el.classList.toggle("playing", !!playId(r) && playId(r) === nowPlaying?.id);
   // !!: toggle(name, undefined) flips the class instead of clearing it.
   el.classList.toggle("ghost", !!((!r.id && !r.file) || r.missing));
+}
+// Size the buttons column to the widest button in this list (none: no column).
+function fitGetColumn() {
+  const main = $(".libmain"), rows = cur.data?.rows || [];
+  const probe = document.createElement("div");
+  probe.className = "get";
+  probe.style.cssText = "position:absolute;visibility:hidden;left:-9999px;overflow:visible;width:max-content";
+  document.body.append(probe);
+  let w = 0, n = 0;
+  for (const r of rows) {
+    const h = getHtml(r);
+    if (!h) continue;
+    probe.innerHTML = h;
+    w = Math.max(w, probe.getBoundingClientRect().width);
+    if (++n > 80) break;
+  }
+  probe.remove();
+  if (w) w = Math.min(Math.ceil(w) + 2, innerWidth < 700 ? 120 : 280);
+  main.style.setProperty("--getw", w + "px");
 }
 function repaintRows() { pool.forEach((el, i) => paintRow(el, cur.view[i], i)); }
 // Refreshes the quality and get-it cells of rows not in the library yet
@@ -1628,7 +1648,7 @@ function renderDetail(d, wasOpen) {
   if (!t) {
     const sc = r.sc;
     h += `<div class="dtitle">${esc(sc?.title || r.title)}</div><div class="dartist">${esc(sc?.uploader || "")}</div>
-      <div class="note" style="margin-top:16px">${r.status === "maybe" ? "A similar file is in your music folder but wasn't counted as the same track." : "Not in your library yet."}${r.note ? " " + esc(r.note) + "." : ""}</div>
+      <div class="note" style="margin-top:16px">${r.status === "maybe" ? "A similar file is in your library, but SuperSync isn't sure it's this track." : "Not in your library yet."}${r.note ? " " + esc(r.note) + "." : ""}</div>
       ${sc ? `<div class="dsec">Get it</div><div class="get" style="justify-content:flex-start;flex-wrap:wrap">${getHtml(r) || ""}</div>
       <div class="dsec">SoundCloud</div><a href="${esc(sc.url)}" target="_blank" rel="noopener" class="muted">${esc(sc.url)}</a>` : ""}`;
   } else {
@@ -2119,7 +2139,7 @@ async function lookForUpgrades() {
   catch (e) { toast(e.message, "err"); }
   finally { setBusy(-1); }
   const n = (cur.data?.rows || []).filter(x => x.better).length;
-  toast(n ? `Found better copies for ${n} track${n === 1 ? "" : "s"} here. Look for the ↑.` : "No new better copies in your music folder or Downloads.");
+  toast(n ? `Found better copies for ${n} track${n === 1 ? "" : "s"} here. Look for the ↑.` : "No new better copies in your download folder or Downloads.");
 }
 async function swapUpgrade(r, path) {
   setBusy(+1);
@@ -2154,10 +2174,10 @@ async function findMoved() {
   setBusy(+1);
   let moves;
   try { moves = await api("missing/find"); } catch (e) { toast(e.message, "err"); return; } finally { setBusy(-1); }
-  if (!moves.length) { toast("Couldn't find any of the missing files in your music folder. Right-click a track and choose Locate… to point to it yourself."); return; }
+  if (!moves.length) { toast("Couldn't find any of the missing files in your Music, download or library folders. Right-click a track and choose Locate… to point to it yourself."); return; }
   const list = moves.slice(0, 40).map(m => `<li><b>${esc(m.title)}</b><div class="mono muted" style="font-size:11.5px">${esc(m.to)}</div></li>`).join("");
   const ok = await askConfirm(`Found ${moves.length} moved file${moves.length === 1 ? "" : "s"}`,
-    `<p style="margin-top:0">These files have the same name in your music folder. SuperSync can point your library at them; cues, playlists and history stay as they are.</p><ul style="max-height:300px;overflow:auto;padding-left:18px">${list}</ul>${moves.length > 40 ? `<div class="muted">…and ${moves.length - 40} more.</div>` : ""}`, "Fix them");
+    `<p style="margin-top:0">Files with the same names are on your computer, somewhere else. SuperSync can point your library at them; cues, playlists and history stay as they are.</p><ul style="max-height:300px;overflow:auto;padding-left:18px">${list}</ul>${moves.length > 40 ? `<div class="muted">…and ${moves.length - 40} more.</div>` : ""}`, "Fix them");
   if (!ok) return;
   relocate(Object.fromEntries(moves.map(m => [m.id, m.to])));
 }
@@ -2555,7 +2575,7 @@ function relink(r) {
   $("#confBody").innerHTML = `<p style="margin-top:0">Paste a link for <b>${esc(r.sc.title)}</b>. SuperSync downloads it into this playlist, in this track's place.</p>
     ${why ? `<div class="muted" style="font-size:12.5px;margin-bottom:10px">Why it didn't download: ${esc(why)}</div>` : ""}
     <input type="text" id="relinkUrl" placeholder="SoundCloud track, YouTube video or audio file link" autocomplete="off" spellcheck="false" style="width:100%;font-size:14px;padding:11px 13px">
-    <div class="muted" style="font-size:12.5px;margin-top:8px">A free-download page (Hypeddit, Toneden…) usually needs you to download the file yourself; you can then drop it in your music folder and rescan.</div>`;
+    <div class="muted" style="font-size:12.5px;margin-top:8px">A download page (Hypeddit, Toneden…) needs you to download the file there first. Then <button class="link" id="relinkFile" type="button">choose the file you downloaded…</button></div>`;
   $("#confYes").textContent = "Download";
   $("#confYes").disabled = false;
   openDlg(d);
@@ -2579,6 +2599,13 @@ function relink(r) {
   };
   $("#confYes").onclick = go;
   $("#relinkUrl").onkeydown = e => { if (e.key === "Enter") go(); };
+  // A file already downloaded (from a download page): pick it.
+  $("#relinkFile").onclick = async () => {
+    const f = await pick(`Choose the file for “${r.sc.title}”`, S.musicDir, "audio");
+    if (!f) return;
+    $("#relinkUrl").value = f;
+    go();
+  };
 }
 
 async function applyPending() {
@@ -2608,7 +2635,7 @@ function renderPending() {
 
 // ---------- duplicates ----------
 let groups = [], keep = {}, dupesLoaded = false;
-const emptyMsg = () => S.musicDir ? "Scan your music folder first." : "Choose your music folder in Settings first.";
+const emptyMsg = () => S.musicDir ? "Click Rescan to read your library's files first." : "Choose a download folder in Settings first.";
 loaders.dupes = async () => {
   if (dupesLoaded) return;
   const box = $("#groups");
