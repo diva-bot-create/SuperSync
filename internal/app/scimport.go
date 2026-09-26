@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"supersync/internal/audio"
+	"supersync/internal/match"
 	"supersync/internal/rbdb"
 	"supersync/internal/soundcloud"
 	"supersync/internal/youtube"
@@ -298,13 +299,23 @@ func (a *App) runImport(j *Job, link string) {
 			break
 		}
 	}
+	idx := a.newLibIndex()
 	for i, row := range res.Rows {
 		e := &SCEntry{SC: row.SC}
 		step := j.Steps[i]
+		// Not found among the files: look at the library's own track info
+		// too (Cloud Library Sync tracks, files named or tagged differently).
+		if !row.SC.Unavailable && row.Status != Have && !(row.Status == Need && row.Decided) {
+			if t, score := idx.best(row.SC); t != nil && score >= match.Sure {
+				row.Status, row.Match = Have, &File{Path: t.Path}
+			} else if t != nil && score >= match.Maybe && row.Status == Need {
+				row.Status, row.Others = Maybe, append([]*File{{Path: t.Path}}, row.Others...)
+			}
+		}
 		switch {
 		case row.SC.Unavailable:
 			e.Status, e.Note = "unavailable", "Removed or made private on SoundCloud"
-		case row.Status == Have && !exists(row.Match.Path):
+		case row.Status == Have && !exists(row.Match.Path) && a.TrackByPath(row.Match.Path) == nil:
 			// The scan remembered a file that has since been moved or deleted.
 			e.Status = "missing"
 		case row.Status == Have:

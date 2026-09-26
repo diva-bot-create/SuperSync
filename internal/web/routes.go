@@ -412,6 +412,19 @@ func (s *server) routes(mux *http.ServeMux) {
 		err := a.WithRekordboxClosed(req.Restart, func() error { return a.Relocate(req.Moves) })
 		reply(w, map[string]int{"relocated": len(req.Moves)}, err)
 	})
+	mux.HandleFunc("POST /api/sc/link", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Playlist string `json:"playlist"`
+			SCID     int64  `json:"scId"`
+			TrackID  string `json:"trackId"`
+			Restart  bool   `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		err := a.WithRekordboxClosed(req.Restart, func() error { return a.LinkEntry(req.Playlist, req.SCID, req.TrackID) })
+		reply(w, map[string]bool{"ok": true}, err)
+	})
 	mux.HandleFunc("POST /api/sc/stop", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			URL string `json:"url"`

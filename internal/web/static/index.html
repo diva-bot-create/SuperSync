@@ -2112,6 +2112,43 @@ async function stopSyncing(url, name) {
   catch (e) { toast(e.message, "err"); }
 }
 
+// ---------- linking a synced track to one already in the library ----------
+function pickLibraryTrack(r) {
+  const d = $("#confirm"), url = cur.data?.sc?.url;
+  if (!url || !r.sc) return;
+  $("#confTitle").textContent = "It's already in my library";
+  $("#confBody").innerHTML = `<p style="margin-top:0">Pick your copy of <b>${esc(r.sc.title)}</b>. It joins this playlist in its place, and later syncs remember it.</p>
+    <input type="text" id="libQ" value="${esc(r.sc.title.replace(/[\(\[].*$/, "").trim())}" autocomplete="off" spellcheck="false" style="width:100%;font-size:14px;padding:10px 12px">
+    <div class="plpicks" id="libHits" style="margin-top:10px"></div>`;
+  $("#confYes").textContent = "Cancel"; $("#confYes").disabled = false;
+  $("#confNo").style.display = "none";
+  let all = null;
+  const done = () => { $("#confNo").style.display = ""; closeDlg(d); };
+  const show = () => {
+    if (!all) return;
+    const words = $("#libQ").value.toLowerCase().split(/\s+/).filter(Boolean);
+    const hits = all.filter(t => { const h = `${t.title} ${t.artist} ${t.path || ""}`.toLowerCase(); return words.every(w => h.includes(w)); }).slice(0, 40);
+    $("#libHits").innerHTML = hits.length ? hits.map(t => `<button class="plpick" data-id="${esc(t.id)}"><b>${esc(t.title)}</b> <span class="muted">${esc(t.artist || "")} · ${fmtDur(t.length) || ""}${t.tier ? " · " + (TIER_LABEL[t.tier] || "") : ""}</span></button>`).join("") : `<div class="muted" style="padding:8px">No tracks match. Try fewer words.</div>`;
+  };
+  openDlg(d);
+  api("library/tracks?playlist=all").then(x => { all = x.rows; show(); }).catch(e => toast(e.message, "err"));
+  setTimeout(() => $("#libQ")?.select(), 60);
+  $("#libQ").oninput = show;
+  $("#confYes").onclick = done;
+  d.addEventListener("cancel", ev => { ev.preventDefault(); done(); }, { once: true });
+  $("#libHits").onclick = async e => {
+    const b = e.target.closest("[data-id]");
+    if (!b) return;
+    done();
+    try {
+      const res = await withRekordbox("add it to the playlist", restart => api("sc/link", { playlist: url, scId: r.sc.id, trackId: b.dataset.id, restart }));
+      if (!res) return;
+      toast("Linked your copy.", "ok");
+      await loadLibrary(); openList(cur.id, { quiet: true });
+    } catch (err) { toast(err.message, "err"); }
+  };
+}
+
 // ---------- upgrading a LOW/NORMAL track ----------
 // Get a better copy (the track's own download/buy links), then swap it in:
 // SuperSync finds files you download by itself (music folder and Downloads).
@@ -2323,6 +2360,7 @@ function trackMenu(r, i) {
     r.missing && { icon: "ⓘ", label: "Why can't SuperSync find it?", run: () => toast((r.missingWhy || "") + " Expected at: " + r.path + (r.statErr ? ". The system says: " + r.statErr : "")) },
     r.missing && { icon: "⎘", label: "Copy details for support", run: () => copyText(`Path: ${r.path}\nReason: ${r.missingWhy || (r.noAccess ? "no access" : "")}\nSystem: ${r.statErr || ""}\nOS: ${navigator.platform}`, "the details") },
     r.noAccess && { icon: "⚠", label: "Why can't SuperSync read this?", run: () => toast(NOACCESS_TIP) },
+    !r.id && sc && cur.data?.sc && { icon: "✓", label: "It's already in my library…", run: () => pickLibraryTrack(r) },
     canRelink(r) && { icon: "🔗", label: "Use another link…", run: () => relink(r) },
     st?.state === "failed" && { icon: "ⓘ", label: "Why it failed", run: () => toast(st.note || "Unknown error") },
     ...links,
@@ -2575,7 +2613,8 @@ function relink(r) {
   $("#confBody").innerHTML = `<p style="margin-top:0">Paste a link for <b>${esc(r.sc.title)}</b>. SuperSync downloads it into this playlist, in this track's place.</p>
     ${why ? `<div class="muted" style="font-size:12.5px;margin-bottom:10px">Why it didn't download: ${esc(why)}</div>` : ""}
     <input type="text" id="relinkUrl" placeholder="SoundCloud track, YouTube video or audio file link" autocomplete="off" spellcheck="false" style="width:100%;font-size:14px;padding:11px 13px">
-    <div class="muted" style="font-size:12.5px;margin-top:8px">A download page (Hypeddit, Toneden…) needs you to download the file there first. Then <button class="link" id="relinkFile" type="button">choose the file you downloaded…</button></div>`;
+    <div class="muted" style="font-size:12.5px;margin-top:8px">A download page (Hypeddit, Toneden…) needs you to download the file there first. Then <button class="link" id="relinkFile" type="button">choose the file you downloaded…</button></div>
+    <div class="muted" style="font-size:12.5px;margin-top:6px">Already have it? <button class="link" id="relinkLib" type="button">Pick it from your library…</button></div>`;
   $("#confYes").textContent = "Download";
   $("#confYes").disabled = false;
   openDlg(d);
@@ -2599,6 +2638,7 @@ function relink(r) {
   };
   $("#confYes").onclick = go;
   $("#relinkUrl").onkeydown = e => { if (e.key === "Enter") go(); };
+  $("#relinkLib").onclick = async () => { await closeDlg(d); pickLibraryTrack(r); };
   // A file already downloaded (from a download page): pick it.
   $("#relinkFile").onclick = async () => {
     const f = await pick(`Choose the file for “${r.sc.title}”`, S.downloadsDir || S.musicDir, "audio");
