@@ -102,5 +102,9 @@ func (t *track) mp3(title, artist string) ([]byte, error) {
 	if err := encode(true); err != nil {
 		return nil, err
 	}
-	return enc.EncodeFrame(out, nil) // drain the lookahead and bit reservoir
+	if out, err = enc.EncodeFrame(out, nil); err != nil { // drain the lookahead and bit reservoir
+		return nil, err
+	}
+	JointStereo(out)
+	return out, nil
 }

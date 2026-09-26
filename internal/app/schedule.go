@@ -13,6 +13,7 @@ import (
 // once rekordbox has been closed for a little while. It never quits or
 // restarts rekordbox itself.
 func (a *App) Background(stop <-chan struct{}) {
+	go a.fixStereo()
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	var closedSince, lastBetter time.Time

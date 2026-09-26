@@ -50,6 +50,9 @@ type Config struct {
 	// KeepRemovedTracks keeps songs in a synced library playlist after they're
 	// taken off the SoundCloud/YouTube playlist (by default they leave it).
 	KeepRemovedTracks bool `json:"keepRemovedTracks,omitempty"`
+	// StereoFixed: YouTube mp3s from before v0.1.29 have had their frame
+	// headers repaired (see youtube.JointStereo).
+	StereoFixed bool `json:"stereoFixed,omitempty"`
 	// NotDuplicates: pairs of files the user said aren't duplicates.
 	NotDuplicates []string `json:"notDuplicates,omitempty"`
 	// Decisions records the user's answers for uncertain matches:
