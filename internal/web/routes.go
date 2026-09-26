@@ -977,32 +977,33 @@ func serveAudio(w http.ResponseWriter, r *http.Request, path string) {
 // ---- state ----
 
 type state struct {
-	Version     string          `json:"version"`
-	Source      *app.SourceInfo `json:"source,omitempty"`
-	SourceErr   string          `json:"sourceErr,omitempty"`
-	MusicDir    string          `json:"musicDir"`
-	HasToken    bool            `json:"hasToken"`
-	MinKbps     int             `json:"minKbps"`
-	Tracks      int             `json:"tracks"`
-	Lossless    int             `json:"lossless"`
-	Upscaled    int             `json:"upscaled"`
-	ScannedAt   time.Time       `json:"scannedAt,omitzero"`
-	Scanning    *progress       `json:"scanning,omitempty"`
-	ScanErr     string          `json:"scanErr,omitempty"`
-	Quarantined int             `json:"quarantined"`
-	Pending     []*app.Change   `json:"pending"`
-	Syncing     []string        `json:"syncing"` // links being imported/synced now
-	AutoSync    int             `json:"autoSyncHours"`
-	AutoApply   bool            `json:"autoApply"`
-	LastSync    time.Time       `json:"lastSync,omitzero"`
-	NextSync    time.Time       `json:"nextSync,omitzero"`
-	LastCleanup string          `json:"lastCleanup,omitempty"` // summary, when it can be undone
-	Update      update.Status   `json:"update"`
-	App         bool            `json:"app"` // in SuperSync's own window
-	KeepRunning bool            `json:"keepRunning"`
-	OpenAtLogin bool            `json:"openAtLogin"`
-	CanAutorun  bool            `json:"canAutorun"`
-	AutoUpdate  bool            `json:"autoUpdate"`
+	Version      string          `json:"version"`
+	Source       *app.SourceInfo `json:"source,omitempty"`
+	SourceErr    string          `json:"sourceErr,omitempty"`
+	MusicDir     string          `json:"musicDir"`
+	HasToken     bool            `json:"hasToken"`
+	MinKbps      int             `json:"minKbps"`
+	Tracks       int             `json:"tracks"`
+	Lossless     int             `json:"lossless"`
+	Upscaled     int             `json:"upscaled"`
+	ScannedAt    time.Time       `json:"scannedAt,omitzero"`
+	Scanning     *progress       `json:"scanning,omitempty"`
+	ScanErr      string          `json:"scanErr,omitempty"`
+	Quarantined  int             `json:"quarantined"`
+	Pending      []*app.Change   `json:"pending"`
+	Syncing      []string        `json:"syncing"` // links being imported/synced now
+	AutoSync     int             `json:"autoSyncHours"`
+	AutoApply    bool            `json:"autoApply"`
+	LastSync     time.Time       `json:"lastSync,omitzero"`
+	NextSync     time.Time       `json:"nextSync,omitzero"`
+	LastCleanup  string          `json:"lastCleanup,omitempty"` // summary, when it can be undone
+	Update       update.Status   `json:"update"`
+	App          bool            `json:"app"`                    // in SuperSync's own window
+	DownloadsDir string          `json:"downloadsDir,omitempty"` // the user's Downloads folder, where new files usually land
+	KeepRunning  bool            `json:"keepRunning"`
+	OpenAtLogin  bool            `json:"openAtLogin"`
+	CanAutorun   bool            `json:"canAutorun"`
+	AutoUpdate   bool            `json:"autoUpdate"`
 }
 
 func (s *server) state() state {
@@ -1022,6 +1023,11 @@ func (s *server) state() state {
 	st.LastSync = a.State.LastSyncTime()
 	st.Update, st.AutoUpdate, st.App = s.upd.Status(), !a.Cfg.NoAutoUpdate, s.inWindow
 	st.KeepRunning, st.OpenAtLogin, st.CanAutorun = !a.Cfg.QuitOnClose, a.Cfg.OpenAtLogin, autostart.Supported()
+	if h, err := os.UserHomeDir(); err == nil {
+		if d := filepath.Join(h, "Downloads"); dirExists(d) {
+			st.DownloadsDir = d
+		}
+	}
 	if a.Src != nil {
 		info := a.Src.Info()
 		st.Source = &info
@@ -1083,3 +1089,5 @@ func (s *server) startScan() {
 		s.mu.Unlock()
 	}()
 }
+
+func dirExists(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }

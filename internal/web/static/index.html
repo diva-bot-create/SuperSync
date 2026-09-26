@@ -2130,7 +2130,7 @@ function upgradeMenu(r) {
   ];
 }
 async function chooseUpgrade(r) {
-  const f = await pick(`Choose a better copy of “${r.title}”`, S.musicDir, "audio");
+  const f = await pick(`Choose a better copy of “${r.title}”`, S.downloadsDir || S.musicDir, "audio");
   if (f) swapUpgrade(r, f);
 }
 async function lookForUpgrades() {
@@ -2601,7 +2601,7 @@ function relink(r) {
   $("#relinkUrl").onkeydown = e => { if (e.key === "Enter") go(); };
   // A file already downloaded (from a download page): pick it.
   $("#relinkFile").onclick = async () => {
-    const f = await pick(`Choose the file for “${r.sc.title}”`, S.musicDir, "audio");
+    const f = await pick(`Choose the file for “${r.sc.title}”`, S.downloadsDir || S.musicDir, "audio");
     if (!f) return;
     $("#relinkUrl").value = f;
     go();

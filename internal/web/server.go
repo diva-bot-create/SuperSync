@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"supersync/internal/app"
+	"supersync/internal/audio"
 	"supersync/internal/autostart"
 	"supersync/internal/rbdb"
 	"supersync/internal/update"
@@ -329,6 +330,8 @@ func browse(dir, ext string) (*dirListing, error) {
 		}
 		if isDir {
 			l.Dirs = append(l.Dirs, n)
+		} else if ext == "audio" && audio.IsAudio(n) && !strings.HasPrefix(n, ".") {
+			l.Files = append(l.Files, n) // any audio file SuperSync can read
 		} else if ext != "" && strings.EqualFold(filepath.Ext(n), ext) {
 			l.Files = append(l.Files, n)
 		}
@@ -342,8 +345,10 @@ func roots() []string {
 	var r []string
 	if h, err := os.UserHomeDir(); err == nil {
 		r = append(r, h)
-		if _, err := os.Stat(filepath.Join(h, "Music")); err == nil {
-			r = append(r, filepath.Join(h, "Music"))
+		for _, d := range []string{"Music", "Downloads", "Desktop"} {
+			if _, err := os.Stat(filepath.Join(h, d)); err == nil {
+				r = append(r, filepath.Join(h, d))
+			}
 		}
 	}
 	switch runtime.GOOS {
