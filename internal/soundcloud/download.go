@@ -2,6 +2,7 @@ package soundcloud
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"supersync/internal/match"
@@ -21,6 +23,64 @@ import (
 // ErrNotDownloadable means there's nothing to fetch: no download button and
 // no full-length mp3 stream (only AAC/Opus, or a 30 s preview).
 var ErrNotDownloadable = errors.New("SoundCloud offers no downloadable mp3 for this track")
+
+// ErrProtected means SoundCloud only streams the track with copy protection
+// (common for ad-supported tracks), which SuperSync doesn't break.
+var ErrProtected = errors.New("SoundCloud only streams this track copy-protected, so it can't be saved; use its buy or download link instead")
+
+// ErrStalled means the download stopped sending data.
+var ErrStalled = errors.New("the download stalled")
+
+// permanent marks errors that trying again won't fix.
+type permanent struct{ error }
+
+func (p permanent) Unwrap() error { return p.error }
+
+// Retryable reports whether a failed download might work if tried again
+// (a stalled or dropped connection, a busy server).
+func Retryable(err error) bool {
+	var p permanent
+	return err != nil && !errors.As(err, &p) && !errors.Is(err, ErrNotDownloadable) && !errors.Is(err, ErrProtected)
+}
+
+// watchdog cancels a download when no data arrives for idle.
+type watchdog struct {
+	r     io.Reader
+	t     *time.Timer
+	idle  time.Duration
+	fired *atomic.Bool
+}
+
+func (w *watchdog) Read(p []byte) (int, error) {
+	n, err := w.r.Read(p)
+	if n > 0 {
+		w.t.Reset(w.idle)
+	}
+	if err != nil && w.fired.Load() {
+		err = ErrStalled
+	}
+	return n, err
+}
+
+// getWatched starts a GET that's cancelled if the server goes quiet for idle
+// (before answering, or mid-body). Close the returned body when done.
+func getWatched(u string, idle time.Duration) (*http.Response, *watchdog, func(), error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	fired := &atomic.Bool{}
+	t := time.AfterFunc(idle, func() { fired.Store(true); cancel() })
+	stop := func() { t.Stop(); cancel() }
+	req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		stop()
+		if fired.Load() {
+			return nil, nil, nil, ErrStalled
+		}
+		return nil, nil, nil, err
+	}
+	return resp, &watchdog{r: resp.Body, t: t, idle: idle, fired: fired}, stop, nil
+}
 
 // CanDownload reports whether Download has something to fetch: the artist's
 // own download button, or failing that a full-length mp3 stream.
@@ -171,30 +231,79 @@ func (c *Client) downloadStream(t *Track, dir string, progress Progress) (string
 			}
 		}
 	}
-	tc := prog
-	if tc == nil {
-		tc = hls
+	var cands []*transcoding
+	for _, tc := range []*transcoding{prog, hls} {
+		if tc != nil {
+			cands = append(cands, tc)
+		}
 	}
-	if tc == nil {
-		return "", errors.New("SoundCloud offers no MP3 stream for this track; use the download button on its page")
+	if len(cands) == 0 {
+		if t.protectedOnly() {
+			return "", ErrProtected
+		}
+		return "", permanent{errors.New("SoundCloud offers no MP3 stream for this track; use the download button on its page")}
 	}
 	q := url.Values{}
 	if t.trackAuth != "" {
 		q.Set("track_authorization", t.trackAuth)
 	}
-	var loc struct {
-		URL string `json:"url"`
+	var lastErr error
+	notFound := 0
+	for _, tc := range cands {
+		var loc struct {
+			URL string `json:"url"`
+		}
+		if err := c.getURL(tc.URL, q, &loc); err != nil {
+			if strings.Contains(err.Error(), "doesn't exist") {
+				notFound++
+			}
+			lastErr = err
+			continue
+		}
+		if loc.URL == "" {
+			lastErr = errors.New("SoundCloud didn't return a stream link")
+			continue
+		}
+		if tc.Format.Protocol == "progressive" {
+			p, err := c.fetchFile(loc.URL, dir, baseName(t), ".mp3", progress)
+			if err == nil || !Retryable(err) {
+				return p, err
+			}
+			lastErr = err
+			continue
+		}
+		return c.fetchHLS(loc.URL, dir, baseName(t), progress)
 	}
-	if err := c.getURL(tc.URL, q, &loc); err != nil {
-		return "", err
+	// SoundCloud lists MP3 streams for some tracks it only actually serves
+	// copy-protected: every MP3 link comes back "not found".
+	if notFound == len(cands) {
+		if t.hasProtected() {
+			return "", ErrProtected
+		}
+		return "", permanent{errors.New("SoundCloud no longer serves this track's stream")}
 	}
-	if loc.URL == "" {
-		return "", errors.New("SoundCloud didn't return a stream link")
+	return "", lastErr
+}
+
+func (t *Track) hasProtected() bool {
+	for _, tc := range t.transcodings {
+		if strings.Contains(tc.Format.Protocol, "encrypted") {
+			return true
+		}
 	}
-	if tc.Format.Protocol == "progressive" {
-		return c.fetchFile(loc.URL, dir, baseName(t), ".mp3", progress)
+	return false
+}
+
+func (t *Track) protectedOnly() bool {
+	if !t.hasProtected() {
+		return false
 	}
-	return c.fetchHLS(loc.URL, dir, baseName(t), progress)
+	for _, tc := range t.transcodings {
+		if !strings.Contains(tc.Format.Protocol, "encrypted") && !tc.Snipped {
+			return false
+		}
+	}
+	return true
 }
 
 // getURL is get() for a full API URL (as given in transcodings).
@@ -252,22 +361,24 @@ func uniquePath(p string) string {
 // fetchFile downloads u to dir/name.<ext>; ext comes from the server's file
 // name or content type unless given.
 func (c *Client) fetchFile(u, dir, name, ext string, progress Progress) (string, error) {
-	req, _ := http.NewRequest("GET", u, nil)
-	req.Header.Set("User-Agent", userAgent)
-	client := &http.Client{Timeout: 15 * time.Minute}
-	resp, err := client.Do(req)
+	resp, body, stop, err := getWatched(u, 45*time.Second)
 	if err != nil {
 		return "", err
 	}
+	defer stop()
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+		err := fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+		if resp.StatusCode == 403 || resp.StatusCode == 404 || resp.StatusCode == 410 {
+			return "", permanent{err}
+		}
+		return "", err
 	}
 	if ext == "" {
 		ext = extFor(resp)
 	}
 	dst := uniquePath(filepath.Join(dir, name+ext))
-	return dst, saveBody(resp.Body, dst, resp.ContentLength, progress)
+	return dst, saveBody(body, dst, resp.ContentLength, progress)
 }
 
 func extFor(resp *http.Response) string {
@@ -335,6 +446,28 @@ func saveBody(r io.Reader, dst string, total int64, progress Progress) error {
 }
 
 // fetchHLS joins an MP3 HLS playlist's segments into one file.
+// DownloadURL saves the file at a web link into dir as name (the extension
+// comes from the server's answer).
+func (c *Client) DownloadURL(u, dir, name string) (string, error) {
+	return c.fetchFile(u, dir, name, "", nil)
+}
+
+// FileName is the file name (without extension) a download of t gets.
+func (t *Track) FileName() string { return baseName(t) }
+
+func fetchSegment(u string) ([]byte, error) {
+	resp, body, stop, err := getWatched(u, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	defer stop()
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("stream segment returned HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(body, 64<<20))
+}
+
 func (c *Client) fetchHLS(u, dir, name string, progress Progress) (string, error) {
 	list, err := c.fetch(u)
 	if err != nil {
@@ -363,15 +496,19 @@ func (c *Client) fetchHLS(u, dir, name string, progress Progress) (string, error
 	pr, pw := io.Pipe()
 	go func() {
 		for _, s := range segs {
-			req, _ := http.NewRequest("GET", s, nil)
-			req.Header.Set("User-Agent", userAgent)
-			resp, err := c.HTTP.Do(req)
-			if err != nil {
-				pw.CloseWithError(err)
-				return
+			// Each segment is small: fetch it whole (so a retry can't
+			// duplicate audio), trying up to three times.
+			var data []byte
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				if data, err = fetchSegment(s); err == nil {
+					break
+				}
+				time.Sleep(time.Duration(attempt+1) * time.Second)
 			}
-			_, err = io.Copy(pw, resp.Body)
-			resp.Body.Close()
+			if err == nil {
+				_, err = pw.Write(data)
+			}
 			if err != nil {
 				pw.CloseWithError(err)
 				return
@@ -379,6 +516,7 @@ func (c *Client) fetchHLS(u, dir, name string, progress Progress) (string, error
 		}
 		pw.Close()
 	}()
+	defer pr.Close() // stops the fetcher if saving fails
 	dst := uniquePath(filepath.Join(dir, name+".mp3"))
 	return dst, saveBody(pr, dst, -1, progress)
 }

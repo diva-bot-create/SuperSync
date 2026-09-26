@@ -244,6 +244,9 @@ func (u *Updater) stage(ctx context.Context, rel *release) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if bundle := AppBundle(); bundle != "" && zipHasBundle(zr) {
+		return stageBundle(ctx, zr, bundle, rel.Tag)
+	}
 	var bin []byte
 	for _, f := range zr.File {
 		if filepath.Base(f.Name) == exeName() && !f.FileInfo().IsDir() {
@@ -275,6 +278,88 @@ func (u *Updater) stage(ctx context.Context, rel *release) (string, error) {
 		return "", err
 	}
 	return staged, nil
+}
+
+// AppBundle is the SuperSync.app the running executable is inside, or "".
+func AppBundle() string {
+	exe, err := Executable()
+	if err != nil {
+		return ""
+	}
+	if i := strings.Index(exe, ".app/Contents/MacOS/"); i > 0 {
+		return exe[:i+4]
+	}
+	return ""
+}
+
+func zipHasBundle(zr *zip.Reader) bool {
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "SuperSync.app/Contents/MacOS/") {
+			return true
+		}
+	}
+	return false
+}
+
+// stageBundle unpacks the new SuperSync.app into a hidden folder beside the
+// installed one and checks it runs. It returns the new bundle's path.
+func stageBundle(ctx context.Context, zr *zip.Reader, bundle, tag string) (string, error) {
+	dir := filepath.Join(filepath.Dir(bundle), ".SuperSync-update-"+tag)
+	os.RemoveAll(dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("can't write next to SuperSync (%v); move SuperSync to your Applications folder, or download the update yourself", err)
+	}
+	fail := func(err error) (string, error) { os.RemoveAll(dir); return "", err }
+	for _, f := range zr.File {
+		if !strings.HasPrefix(f.Name, "SuperSync.app/") {
+			continue
+		}
+		p := filepath.Join(dir, filepath.FromSlash(f.Name))
+		if !strings.HasPrefix(p, dir+string(filepath.Separator)) {
+			return fail(errors.New("the download has an unexpected layout"))
+		}
+		mode := f.Mode()
+		switch {
+		case mode.IsDir():
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				return fail(err)
+			}
+			continue
+		case mode&os.ModeSymlink != 0:
+			rc, err := f.Open()
+			if err != nil {
+				return fail(err)
+			}
+			target, _ := io.ReadAll(io.LimitReader(rc, 4096))
+			rc.Close()
+			os.MkdirAll(filepath.Dir(p), 0o755)
+			if err := os.Symlink(string(target), p); err != nil {
+				return fail(err)
+			}
+			continue
+		}
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		rc, err := f.Open()
+		if err != nil {
+			return fail(err)
+		}
+		out, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm()|0o600)
+		if err == nil {
+			_, err = io.Copy(out, io.LimitReader(rc, 300<<20))
+			if cerr := out.Close(); err == nil {
+				err = cerr
+			}
+		}
+		rc.Close()
+		if err != nil {
+			return fail(err)
+		}
+	}
+	app := filepath.Join(dir, "SuperSync.app")
+	if err := verifyRuns(ctx, filepath.Join(app, "Contents", "MacOS", "SuperSync"), tag); err != nil {
+		return fail(err)
+	}
+	return app, nil
 }
 
 // verifyRuns starts the new executable with "help" and checks it reports the
@@ -310,6 +395,23 @@ func Install(staged string) error {
 	if err != nil {
 		return err
 	}
+	if strings.HasSuffix(staged, ".app") {
+		// Swap the whole app: the old one goes into the update folder, which
+		// is removed on the next start.
+		bundle := AppBundle()
+		if bundle == "" {
+			return errors.New("SuperSync isn't running from its app")
+		}
+		old := filepath.Join(filepath.Dir(staged), "old.app")
+		if err := os.Rename(bundle, old); err != nil {
+			return err
+		}
+		if err := os.Rename(staged, bundle); err != nil {
+			os.Rename(old, bundle) // put it back
+			return err
+		}
+		return nil
+	}
 	if runtime.GOOS == "windows" {
 		old := exe + ".old"
 		os.Remove(old)
@@ -333,8 +435,12 @@ func Cleanup() {
 		return
 	}
 	os.Remove(exe + ".old")
-	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(exe), ".SuperSync-update-*"))
+	dir := filepath.Dir(exe)
+	if b := AppBundle(); b != "" {
+		dir = filepath.Dir(b)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, ".SuperSync-update-*"))
 	for _, m := range matches {
-		os.Remove(m)
+		os.RemoveAll(m)
 	}
 }

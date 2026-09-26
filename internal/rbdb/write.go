@@ -50,7 +50,18 @@ type Tx struct {
 	playlists []xmlNode // additions for masterPlaylists6.xml
 	done      bool
 	start     fingerprint // the library as it was when the transaction began
+	// ReuseBackup lets a small follow-up write (a playlist filling in during
+	// an import) skip making a new backup when SuperSync made one minutes ago
+	// and nothing else has touched the library since. Otherwise one import
+	// could push all the older backups out of the 10 that are kept.
+	ReuseBackup bool
 }
+
+var (
+	lastWrote    fingerprint // the library right after SuperSync's last write
+	lastBackup   string
+	lastBackupAt time.Time
+)
 
 // writeMu makes SuperSync's own writes take turns: a transaction holds it
 // from Begin until Commit or Rollback, so a background sync and a clean-up
@@ -359,6 +370,50 @@ func (t *Tx) AddToPlaylist(playlistID string, contentIDs ...string) error {
 	return nil
 }
 
+// OrderPlaylist puts a playlist's entries in the given order (content IDs);
+// entries not listed keep their relative order after them.
+func (t *Tx) OrderPlaylist(playlistID string, contentIDs []string) error {
+	rows, err := t.tx.Query(`SELECT ID, ContentID FROM djmdSongPlaylist WHERE PlaylistID = ? AND IFNULL(rb_local_deleted,0)=0 ORDER BY TrackNo`, playlistID)
+	if err != nil {
+		return err
+	}
+	type entry struct{ id, content string }
+	var all []entry
+	for rows.Next() {
+		var e entry
+		if err := rows.Scan(&e.id, &e.content); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, e)
+	}
+	rows.Close()
+	rank := map[string]int{}
+	for i, c := range contentIDs {
+		if _, ok := rank[c]; !ok {
+			rank[c] = i
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		ri, iok := rank[all[i].content]
+		rj, jok := rank[all[j].content]
+		switch {
+		case iok && jok:
+			return ri < rj
+		case iok != jok:
+			return iok
+		}
+		return false
+	})
+	for n, e := range all {
+		if _, err := t.tx.Exec(`UPDATE djmdSongPlaylist SET TrackNo = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ? AND TrackNo <> ?`,
+			n+1, t.nextUSN(), t.now, e.id, n+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (t *Tx) abort() {
 	if t.db == nil {
 		return // already finished
@@ -421,7 +476,12 @@ func (t *Tx) Commit(backupRoot string) (string, error) {
 		os.Remove(tmp)
 		return "", ErrChanged
 	}
-	backup, err := t.backup(backupRoot)
+	var backup string
+	if t.ReuseBackup && lastBackup != "" && time.Since(lastBackupAt) < 15*time.Minute && t.start == lastWrote {
+		backup = lastBackup
+	} else if backup, err = t.backup(backupRoot); err == nil {
+		lastBackup, lastBackupAt = backup, time.Now()
+	}
 	if err != nil {
 		os.Remove(tmp)
 		return "", fmt.Errorf("couldn't back up the library, so nothing was changed: %w", err)
@@ -433,6 +493,7 @@ func (t *Tx) Commit(backupRoot string) (string, error) {
 	if err := os.Rename(tmp, t.loc.DB); err != nil {
 		return backup, err
 	}
+	lastWrote = fingerprintOf(t.loc)
 	if err := t.updatePlaylistXML(); err != nil {
 		return backup, fmt.Errorf("library updated, but masterPlaylists6.xml couldn't be: %w", err)
 	}

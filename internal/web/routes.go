@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +23,7 @@ import (
 	"supersync/internal/rbdb"
 	"supersync/internal/soundcloud"
 	"supersync/internal/update"
+	"supersync/internal/window"
 )
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -76,6 +78,32 @@ func (s *server) routes(mux *http.ServeMux) {
 		reply(w, s.state(), err)
 	})
 
+	mux.HandleFunc("POST /api/focus", func(w http.ResponseWriter, r *http.Request) {
+		if s.inWindow {
+			window.Focus()
+		}
+		reply(w, map[string]bool{"window": s.inWindow}, nil)
+	})
+	mux.HandleFunc("POST /api/quit", func(w http.ResponseWriter, r *http.Request) {
+		s.quit()
+		reply(w, map[string]bool{"ok": true}, nil)
+	})
+	// Links from the page open in the default browser (the app window doesn't browse).
+	mux.HandleFunc("POST /api/open", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			URL string `json:"url"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		u, err := url.Parse(req.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			reply(w, nil, errors.New("not a web link"))
+			return
+		}
+		open(u.String())
+		reply(w, map[string]bool{"ok": true}, nil)
+	})
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
 		go s.upd.Check(context.Background())
 		time.Sleep(150 * time.Millisecond) // usually enough to report "checking"
@@ -153,6 +181,16 @@ func (s *server) routes(mux *http.ServeMux) {
 	})
 
 	mux.HandleFunc("GET /api/audio/{id}", func(w http.ResponseWriter, r *http.Request) {
+		// "sc:<id>" plays a SoundCloud track that isn't in the library yet.
+		if id, ok := strings.CutPrefix(r.PathValue("id"), "sc:"); ok {
+			path, err := s.soundcloudStream(id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			serveAudio(w, r, path)
+			return
+		}
 		t := s.track(r.PathValue("id"))
 		if t == nil {
 			http.NotFound(w, r)
@@ -167,12 +205,16 @@ func (s *server) routes(mux *http.ServeMux) {
 	})
 
 	mux.HandleFunc("GET /api/waveform/{id}", func(w http.ResponseWriter, r *http.Request) {
-		t := s.track(r.PathValue("id"))
-		if t == nil {
-			reply(w, nil, errors.New("no such track"))
-			return
+		var t *rbdb.Track
+		var path string
+		var err error
+		if id, ok := strings.CutPrefix(r.PathValue("id"), "sc:"); ok {
+			path, err = s.soundcloudStream(id)
+		} else if t = s.track(r.PathValue("id")); t == nil {
+			err = errors.New("no such track")
+		} else {
+			path, err = s.audioPath(t)
 		}
-		path, err := s.audioPath(t)
 		if err != nil {
 			reply(w, nil, err)
 			return
@@ -188,7 +230,9 @@ func (s *server) routes(mux *http.ServeMux) {
 			RB     []byte `json:"rb,omitempty"` // rekordbox's colour waveform, 2 bytes per column (big-endian)
 			RBRate int    `json:"rbRate,omitempty"`
 		}{Waveform: wf, DRate: audio.DetailRate}
-		if an := a.Src.Analysis(t.ID); an != nil && len(an.Detail) > 0 {
+		if t == nil {
+			// A SoundCloud stream: no rekordbox analysis.
+		} else if an := a.Src.Analysis(t.ID); an != nil && len(an.Detail) > 0 {
 			out.RB = make([]byte, 2*len(an.Detail))
 			for i, v := range an.Detail {
 				out.RB[2*i], out.RB[2*i+1] = byte(v>>8), byte(v)
@@ -197,6 +241,19 @@ func (s *server) routes(mux *http.ServeMux) {
 		}
 		w.Header().Set("Cache-Control", "private, max-age=3600")
 		reply(w, out, nil)
+	})
+
+	mux.HandleFunc("POST /api/sc/relink", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Playlist string `json:"playlist"`
+			SCID     int64  `json:"scId"`
+			URL      string `json:"url"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		res, err := a.Relink(req.Playlist, req.SCID, req.URL)
+		reply(w, res, err)
 	})
 
 	// ---- SoundCloud import ----
@@ -710,6 +767,7 @@ type state struct {
 	NextSync    time.Time       `json:"nextSync,omitzero"`
 	LastCleanup string          `json:"lastCleanup,omitempty"` // summary, when it can be undone
 	Update      update.Status   `json:"update"`
+	App         bool            `json:"app"` // in SuperSync's own window
 	AutoUpdate  bool            `json:"autoUpdate"`
 }
 
@@ -728,7 +786,7 @@ func (s *server) state() state {
 		st.LastCleanup = lc.Summary
 	}
 	st.LastSync = a.State.LastSyncTime()
-	st.Update, st.AutoUpdate = s.upd.Status(), !a.Cfg.NoAutoUpdate
+	st.Update, st.AutoUpdate, st.App = s.upd.Status(), !a.Cfg.NoAutoUpdate, s.inWindow
 	if a.Src != nil {
 		info := a.Src.Info()
 		st.Source = &info

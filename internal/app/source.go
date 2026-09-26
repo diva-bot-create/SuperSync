@@ -62,6 +62,10 @@ type Change struct {
 	Items     []ChangeItem `json:"items"`
 	SCURL     string       `json:"scUrl,omitempty"`
 	CreatedAt time.Time    `json:"createdAt"`
+	// Ordered puts the playlist in the order of Items (the final step of an import).
+	Ordered bool `json:"ordered,omitempty"`
+	// Interim marks a partial update while an import is still downloading.
+	Interim bool `json:"interim,omitempty"`
 }
 
 type ChangeItem struct {
@@ -219,6 +223,7 @@ func (s *rbSource) Apply(c *Change) (*Applied, error) {
 	if err != nil {
 		return nil, err
 	}
+	tx.ReuseBackup = c.SCURL != "" // an import's writes share one backup
 	res := &Applied{}
 	fail := func(err error) (*Applied, error) { tx.Rollback(); return nil, err }
 	var ids []string
@@ -257,6 +262,11 @@ func (s *rbSource) Apply(c *Change) (*Applied, error) {
 		}
 		if err := tx.AddToPlaylist(pid, ids...); err != nil {
 			return fail(err)
+		}
+		if c.Ordered {
+			if err := tx.OrderPlaylist(pid, ids); err != nil {
+				return fail(err)
+			}
 		}
 		res.PlaylistID = pid
 	}

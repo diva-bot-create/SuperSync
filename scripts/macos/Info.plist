@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key><string>SuperSync</string>
+	<key>CFBundleDisplayName</key><string>SuperSync</string>
+	<key>CFBundleIdentifier</key><string>com.queenout.supersync</string>
+	<key>CFBundleExecutable</key><string>SuperSync</string>
+	<key>CFBundleIconFile</key><string>SuperSync</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>__VERSION__</string>
+	<key>CFBundleVersion</key><string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key><string>11.0</string>
+	<key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSHumanReadableCopyright</key><string>SuperSync</string>
+	<key>NSAppTransportSecurity</key>
+	<dict><key>NSAllowsLocalNetworking</key><true/></dict>
+	<!-- Why SuperSync asks for folders macOS protects (music often lives there). -->
+	<key>NSDownloadsFolderUsageDescription</key><string>SuperSync reads and organises the music in your Downloads folder.</string>
+	<key>NSDocumentsFolderUsageDescription</key><string>SuperSync reads and organises the music in your Documents folder.</string>
+	<key>NSDesktopFolderUsageDescription</key><string>SuperSync reads and organises the music on your Desktop.</string>
+	<key>NSRemovableVolumesUsageDescription</key><string>SuperSync reads and organises the music on your external drives.</string>
+	<key>NSNetworkVolumesUsageDescription</key><string>SuperSync reads and organises the music on network drives.</string>
+</dict>
+</plist>

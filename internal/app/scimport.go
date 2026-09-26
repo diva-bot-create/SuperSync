@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,6 +121,7 @@ type Job struct {
 
 type JobStep struct {
 	N        int     `json:"n"`
+	SCID     int64   `json:"scId,omitempty"`
 	Title    string  `json:"title"`
 	State    string  `json:"state"` // queued, have, maybe, downloading, downloaded, skipped, failed
 	Progress float64 `json:"progress"`
@@ -280,7 +282,7 @@ func (a *App) runImport(j *Job, link string) {
 	j.set(func() {
 		j.Title, j.Status, j.Source = pl.Title, "matching", rm.kind
 		for i, t := range pl.Tracks {
-			j.Steps = append(j.Steps, &JobStep{N: i + 1, Title: t.Title, State: "queued"})
+			j.Steps = append(j.Steps, &JobStep{N: i + 1, SCID: t.ID, Title: t.Title, State: "queued"})
 		}
 	})
 	lib, err := a.Library(nil)
@@ -325,11 +327,62 @@ func (a *App) runImport(j *Job, link string) {
 		scp.Entries = append(scp.Entries, e)
 	}
 
-	// Download the rest, three at a time.
+	// Remember the playlist now, and create it in the library straight away
+	// with the tracks already there, so it can be opened (and played from)
+	// while the rest download.
+	a.State.mu.Lock()
+	if old := a.scByURL(link); old != nil {
+		scp.PlaylistID = old.PlaylistID // keep the link to the library playlist while syncing
+		*old = *scp
+		scp = old
+	} else {
+		a.State.SCPlaylists = append(a.State.SCPlaylists, scp)
+	}
+	a.State.save()
+	a.State.mu.Unlock()
+
+	change := func(entries []*SCEntry, interim bool) *Change {
+		return scChange(rm.folder, pl.Title, link, entries, interim)
+	}
+	var mu sync.Mutex // guards scp.Entries' fields while downloads run
+	snapshot := func() []*SCEntry {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]*SCEntry, len(scp.Entries))
+		for i, e := range scp.Entries {
+			c := *e
+			out[i] = &c
+		}
+		return out
+	}
+	waiting := false
+	apply := func(interim bool) error {
+		err := a.applyChange(change(snapshot(), interim))
+		if errors.Is(err, rbdb.ErrRunning) {
+			waiting = true
+			return nil
+		}
+		if err == nil {
+			mu.Lock()
+			if sp := a.scByURLLocked(link); sp != nil {
+				j.set(func() { j.PlaylistID = sp.PlaylistID })
+			}
+			mu.Unlock()
+		}
+		return err
+	}
+	if err := apply(true); err != nil {
+		fail(err)
+		return
+	}
+
+	// Download the rest, three at a time, adding finished tracks to the
+	// playlist every 20 seconds or so.
 	j.set(func() { j.Status = "downloading" })
 	dir := filepath.Join(a.Cfg.MusicDir, rm.folder, soundcloud.SafeFilename(pl.Title))
 	sem := make(chan struct{}, 3)
 	var wg sync.WaitGroup
+	fresh := make(chan struct{}, 64)
 	for i, e := range scp.Entries {
 		step := j.Steps[i]
 		if e.Status != "missing" || e.SC.Unavailable {
@@ -345,33 +398,92 @@ func (a *App) runImport(j *Job, link string) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			j.set(func() { step.State = "downloading" })
-			path, original, err := rm.download(i, dir, func(done, total int64) {
-				j.set(func() {
-					if total > 0 {
-						step.Progress = float64(done) / float64(total)
-					} else {
-						step.Progress = -1
-					}
+			var path string
+			var original bool
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				if attempt > 0 {
+					j.set(func() { step.Note, step.Progress = "trying again", 0 })
+					time.Sleep(time.Duration(attempt) * 3 * time.Second)
+				}
+				path, original, err = rm.download(i, dir, func(done, total int64) {
+					j.set(func() {
+						if total > 0 {
+							step.Progress = float64(done) / float64(total)
+						} else {
+							step.Progress = -1
+						}
+					})
 				})
-			})
+				if err == nil || !soundcloud.Retryable(err) {
+					break
+				}
+			}
 			if err != nil {
 				j.set(func() { step.State, step.Note = "failed", err.Error() })
+				mu.Lock()
 				e.Status, e.Note = "failed", err.Error()
+				mu.Unlock()
 				return
 			}
+			mu.Lock()
 			e.Status, e.File = "downloaded", path
+			mu.Unlock()
 			note := "stream copy"
 			if original {
 				note = "original file"
 			}
 			j.set(func() { step.State, step.Note, step.Progress = "downloaded", note, 1 })
+			select {
+			case fresh <- struct{}{}:
+			default:
+			}
 		}(i, e, step)
 	}
-	wg.Wait()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	pending, last := 0, time.Now()
+	for finished := false; !finished; {
+		select {
+		case <-fresh:
+			pending++
+		case <-done:
+			finished = true
+		case <-time.After(5 * time.Second):
+		}
+		if !finished && pending > 0 && !waiting && time.Since(last) > 20*time.Second {
+			if err := apply(true); err != nil {
+				log.Printf("adding downloaded tracks to %s: %v", pl.Title, err)
+			}
+			pending, last = 0, time.Now()
+		}
+	}
 
-	// One change: the playlist in the source's folder with everything we have.
-	ch := &Change{ID: newID(), Label: rm.folder + ": " + pl.Title, Folder: rm.folder, Playlist: pl.Title, SCURL: link, CreatedAt: time.Now()}
-	for _, e := range scp.Entries {
+	// Everything, in SoundCloud's order.
+	a.State.mu.Lock()
+	a.State.save()
+	a.State.mu.Unlock()
+	j.set(func() { j.Status = "applying" })
+	waiting = false
+	if err := apply(false); err != nil {
+		fail(err)
+		return
+	}
+	if waiting {
+		j.set(func() {
+			j.Status, j.Message = "waiting", "Close rekordbox to add the playlist; SuperSync will finish as soon as you click Apply."
+		})
+		return
+	}
+	j.set(func() { j.Status = "done" })
+}
+
+// scChange is the library change for a synced playlist: every entry that's
+// in the library or downloaded, in the playlist's order (unless interim).
+func scChange(folder, title, link string, entries []*SCEntry, interim bool) *Change {
+	ch := &Change{ID: newID(), Label: folder + ": " + title, Folder: folder, Playlist: title,
+		SCURL: link, CreatedAt: time.Now(), Interim: interim, Ordered: !interim}
+	for _, e := range entries {
 		switch {
 		case e.TrackID != "":
 			ch.Items = append(ch.Items, ChangeItem{TrackID: e.TrackID, SCID: e.SC.ID})
@@ -384,28 +496,7 @@ func (a *App) runImport(j *Job, link string) {
 			ch.Items = append(ch.Items, ChangeItem{New: newTrack(in, title, artist), SCID: e.SC.ID})
 		}
 	}
-	a.State.mu.Lock()
-	if old := a.scByURL(link); old != nil {
-		scp.PlaylistID = old.PlaylistID // keep the link to the library playlist while syncing
-		*old = *scp
-		scp = old
-	} else {
-		a.State.SCPlaylists = append(a.State.SCPlaylists, scp)
-	}
-	a.State.save()
-	a.State.mu.Unlock()
-
-	j.set(func() { j.Status = "applying" })
-	if err := a.applyChange(ch); errors.Is(err, rbdb.ErrRunning) {
-		j.set(func() {
-			j.Status, j.Message = "waiting", "Close rekordbox to add the playlist; SuperSync will finish as soon as you click Apply."
-		})
-		return
-	} else if err != nil {
-		fail(err)
-		return
-	}
-	j.set(func() { j.Status, j.PlaylistID = "done", scp.PlaylistID })
+	return ch
 }
 
 func (a *App) scByURLLocked(u string) *SCPlaylist {

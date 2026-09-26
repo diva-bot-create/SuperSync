@@ -237,6 +237,9 @@ main { padding-bottom: calc(var(--player) + 40px); }
 .tier.hq { color: var(--info); background: var(--info-soft); }
 .tier.uhq { color: var(--have); background: var(--have-soft); }
 .tier.none { color: var(--muted); background: var(--panel-2); }
+.tier.dl { position: relative; overflow: hidden; min-width: 46px; text-align: center; }
+.tier.dl i { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, currentColor 24%, transparent); transition: width .45s var(--ease, ease); }
+.relink { font-size: 12px; white-space: nowrap; }
 .tier.stream { color: #d59cff; background: color-mix(in srgb, #b46cff 16%, transparent); }
 .warnish { color: var(--need); cursor: help; }
 .tier.noaccess { color: var(--need); background: var(--panel-2); }
@@ -1211,13 +1214,36 @@ async function startSync(url) {
   if (!S.musicDir) { toast("Choose a download folder in Settings first.", "err"); selectTab("settings"); return; }
   let job;
   try { job = await api("sc/import", { url }); } catch (e) { toast(e.message, "err"); return; }
+  followSync(url, job, false);
+}
+// Follows an import or sync. With open, the playlist opens as soon as it
+// exists (in the library, or waiting for rekordbox to close). The list
+// reloads every few seconds to pick up tracks as they're added; rows show
+// each download live in between.
+function followSync(url, job, open) {
   syncing.set(url, job);
   setBusy(+1);
   paintSyncLabels(); renderSyncBtn(); showSyncBar(job);
+  let opened = !open, lastReload = 0, lastDone = -1;
   const poll = async () => {
     try { job = await api("jobs/" + job.id); } catch (e) { syncing.delete(url); setBusy(-1); toast(e.message, "err"); return; }
+    job.url = url;
     syncing.set(url, job);
-    if (cur.data?.sc?.url === url) { renderSyncBtn(); showSyncBar(job); }
+    if (!opened && (job.playlistId || ["downloading", "applying", "waiting"].includes(job.status))) {
+      opened = true;
+      await loadLibrary();
+      await openList(job.playlistId || "sc:" + url);
+      lastReload = Date.now();
+    }
+    if (cur.data?.sc?.url === url) {
+      renderSyncBtn(); showSyncBar(job);
+      const doneN = (job.steps || []).filter(x => x.state === "downloaded").length;
+      if (doneN !== lastDone && Date.now() - lastReload > 4000) {
+        lastDone = doneN; lastReload = Date.now();
+        if (job.playlistId && cur.id !== job.playlistId) await loadLibrary();
+        openList(job.playlistId || cur.id, { quiet: true });
+      } else repaintRows(), refreshBadges();
+    }
     if (["done", "error", "waiting"].includes(job.status)) {
       syncing.delete(url); setBusy(-1);
       const got = (job.steps || []).filter(x => x.state === "downloaded").length;
@@ -1288,15 +1314,35 @@ function renderRows(animate) {
 }
 function paintRow(el, r, i) {
   el.classList.toggle("sel", i === selIdx);
-  el.classList.toggle("playing", !!r.id && r.id === nowPlaying?.id);
+  el.classList.toggle("playing", !!playId(r) && playId(r) === nowPlaying?.id);
   el.classList.toggle("ghost", !r.id || r.missing);
 }
 function repaintRows() { pool.forEach((el, i) => paintRow(el, cur.view[i], i)); }
+// Refreshes the quality and get-it cells of rows not in the library yet
+// (their live download state), without rebuilding the rows.
+function refreshBadges() {
+  pool.forEach((el, i) => {
+    const r = cur.view[i];
+    if (!r || r.id) return;
+    const cells = el.children, badge = tierBadge(r), get = getHtml(r);
+    if (cells[5] && cells[5].innerHTML !== badge) cells[5].innerHTML = badge;
+    if (cells[6] && cells[6].innerHTML !== get) cells[6].innerHTML = get;
+  });
+}
 $("#vlist").addEventListener("scroll", () => requestAnimationFrame(() => renderRows(false)), { passive: true });
 addEventListener("resize", () => { if (cur.data) renderRows(false); });
 
 function tierBadge(r) {
-  if (!r.id) return `<span class="tier none" title="${esc(r.note || "")}">${r.status === "maybe" ? "MAYBE" : "NEED"}</span>`;
+  if (!r.id) {
+    const st = stepFor(r);
+    if (st?.state === "downloading") return `<span class="tier normal dl" title="Downloading"><i style="width:${st.progress > 0 ? Math.round(st.progress * 100) : 30}%"></i>${st.progress > 0 ? Math.round(st.progress * 100) + "%" : "…"}</span>`;
+    if (st?.state === "queued") return `<span class="tier none" title="Waiting to download">QUEUED</span>`;
+    if (st?.state === "downloaded") return `<span class="tier hq" title="Downloaded; being added to the playlist">ADDING</span>`;
+    const state = st?.state || r.status;
+    if (state === "failed") return `<span class="tier low" title="${esc(st?.note || r.note || "")}">FAILED</span>`;
+    if (state === "skipped") return `<span class="tier none" title="${esc(st?.note || r.note || "")}">NO DOWNLOAD</span>`;
+    return `<span class="tier none" title="${esc(r.note || "")}">${r.status === "maybe" ? "MAYBE" : "NEED"}</span>`;
+  }
   if (r.stream) {
     const svc = SERVICE[r.stream] || r.stream;
     return `<span class="tier stream" title="${esc(r.stream === "soundcloud" ? "Streams from SoundCloud inside rekordbox; there's no file on this computer. SuperSync plays it from SoundCloud." : `Streams from ${svc} inside rekordbox; there's no file on this computer, so it only plays in rekordbox.`)}">${esc(svc.toUpperCase())}</span>`;
@@ -1308,9 +1354,15 @@ function tierBadge(r) {
 }
 // The better-copy buttons go where SoundCloud's own buttons go: the download
 // button (on the track's page; SoundCloud requires a login there) or the buy link.
+function canRelink(r) {
+  if (r.id || !r.sc || !cur.data?.sc) return false;
+  const st = stepFor(r);
+  return st ? ["failed", "skipped"].includes(st.state) : ["failed", "skipped", "missing"].includes(r.status) || !r.status;
+}
 function getHtml(r) {
   if (!cur.data?.sc || !r.sc || (r.id && r.tier === "uhq")) return "";
   const out = [];
+  if (canRelink(r)) out.push(`<button class="link relink" data-relink="${r.sc.id}" title="Download this track from a different link (SoundCloud, YouTube or an audio file)">Use another link…</button>`);
   if (r.sc.downloadable) out.push(r.sc.downloadsLeft
     ? `<a href="${esc(r.sc.url)}" target="_blank" rel="noopener" title="The artist's own file. Opens the track on SoundCloud: log in, then ⋯ More → Download file.">⬇ SoundCloud</a>`
     : `<span class="st" title="The uploader's download limit is used up">Limit reached</span>`);
@@ -1322,10 +1374,23 @@ function getHtml(r) {
   if (!out.length) out.push(`<a class="alt" href="${esc(searchURL(r.sc.title))}" target="_blank" rel="noopener">Search Beatport</a>`);
   return out.join("");
 }
+// What the player plays for a row: the library track, or for a SoundCloud
+// track that isn't downloaded yet, its stream ("sc:<id>").
+function playId(r) {
+  if (!r) return null;
+  if (r.id) return r.missing ? null : r.id;
+  if (r._pid === undefined) r._pid = r.sc && !r.sc.unavailable && cur.data?.sc?.source !== "youtube" ? "sc:" + r.sc.id : null;
+  return r._pid;
+}
+// A synced playlist's live download state for a row, while it syncs.
+function stepFor(r) {
+  const job = cur.data?.sc && syncing.get(cur.data.sc.url);
+  return job && r.sc ? (job.steps || []).find(x => x.scId === r.sc.id) : null;
+}
 function rowHtml(r, i) {
   const sub = [r.artist, r.album].filter(Boolean).join(" · ");
   const bpm = r.bpm ? (r.bpm % 1 ? r.bpm.toFixed(1) : r.bpm.toFixed(0)) : "";
-  return `<div class="n"><span class="nn">${i + 1}</span>${r.id && !r.missing ? `<button class="pl" data-play="${i}" aria-label="Play" tabindex="-1">▶</button>` : ""}</div>
+  return `<div class="n"><span class="nn">${i + 1}</span>${playId(r) ? `<button class="pl" data-play="${i}" aria-label="Play" tabindex="-1">▶</button>` : ""}</div>
     <div style="min-width:0"><div class="tt">${esc(r.title || r.sc?.title || "")}</div><div class="ta">${esc(sub)}${r.cues ? ` <span class="cuedot" title="${r.cues} cue${r.cues === 1 ? "" : "s"}">◆</span>` : ""}</div></div>
     <div class="num">${bpm}</div><div class="num">${esc(r.key || "")}</div><div class="num">${fmtDur(r.length)}</div>
     <div>${tierBadge(r)}</div><div class="get">${getHtml(r)}</div>`;
@@ -1335,6 +1400,8 @@ $("#vlist").addEventListener("click", e => {
   const row = e.target.closest(".trow");
   if (!row || e.target.closest("a")) return;
   const i = Number(row.dataset.i);
+  const rl = e.target.closest("[data-relink]");
+  if (rl) { relink(cur.view[i]); return; }
   if (e.target.closest("[data-play]")) { playIndex(i); return; }
   select(i);
 });
@@ -1625,23 +1692,24 @@ $("#pVol").value = au.volume;
 $("#pVol").oninput = e => { au.volume = Number(e.target.value); store.set("vol", au.volume); };
 
 function playIndex(i) {
-  queue = cur.view.filter(r => r.id && !r.missing);
+  queue = cur.view.filter(playId);
   playTrack(cur.view[i]);
 }
 async function playTrack(r, fromMs = 0) {
-  if (!r?.id || r.missing) return;
-  if (nowPlaying?.id !== r.id) {
-    nowPlaying = { id: r.id, row: r, wave: null, cues: [], length: r.length };
-    if (!queue.some(q => q.id === r.id)) queue = cur.view.filter(x => x.id && !x.missing);
-    qi = queue.findIndex(q => q.id === r.id);
-    au.src = `/api/audio/${encodeURIComponent(r.id)}?k=${token}`;
-    if (r.stream === "soundcloud") toast("Getting this track from SoundCloud…");
+  const id = playId(r);
+  if (!id) return;
+  if (nowPlaying?.id !== id) {
+    nowPlaying = { id, row: r, wave: null, cues: [], length: r.length || (r.sc ? r.sc.durationMs / 1000 : 0) };
+    if (!queue.some(q => playId(q) === id)) queue = cur.view.filter(playId);
+    qi = queue.findIndex(q => playId(q) === id);
+    au.src = `/api/audio/${encodeURIComponent(id)}?k=${token}`;
+    if (r.stream === "soundcloud" || !r.id) toast("Getting this track from SoundCloud…");
     const t = $("#pTitle"), a = $("#pArtist");
-    t.textContent = r.title; a.textContent = r.artist || "";
+    t.textContent = r.title || r.sc?.title || ""; a.textContent = r.artist || r.sc?.uploader || "";
     rise([t, a], { gap: 60, dist: 6 });
     if ("mediaSession" in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: r.title, artist: r.artist || "", album: r.album || "" });
-    getWave(r.id).then(w => { if (nowPlaying?.id === r.id) { nowPlaying.wave = w; drawAll(); anim($("#pWave"), [{ opacity: 0 }, { opacity: 1 }], { duration: 500 }); } });
-    api("track/" + encodeURIComponent(r.id)).then(d => { if (nowPlaying?.id === r.id) { nowPlaying.cues = d.cues || []; drawAll(); } }).catch(() => {});
+    getWave(id).then(w => { if (nowPlaying?.id === id) { nowPlaying.wave = w; drawAll(); anim($("#pWave"), [{ opacity: 0 }, { opacity: 1 }], { duration: 500 }); } });
+    if (r.id) api("track/" + encodeURIComponent(r.id)).then(d => { if (nowPlaying?.id === id) { nowPlaying.cues = d.cues || []; drawAll(); } }).catch(() => {});
     repaintRows();
   }
   if (fromMs) {
@@ -1727,12 +1795,11 @@ async function startImport() {
   morphButton($("#impGo"), '<span class="spin"></span>Starting');
   let job;
   try { job = await api("sc/import", { url }); } catch (e) { toast(e.message, "err"); $("#impGo").disabled = false; morphButton($("#impGo"), "Add playlist"); return; }
-  importJob = job;
-  setBusy(+1);
-  await smoothHeight($("#importDlg"), () => {
-    $("#impBody").innerHTML = `<div class="jsum" id="jSum"></div><div class="jprog"><i id="jBar"></i></div><div class="muted" id="jMsg" style="font-size:12.5px;margin-bottom:10px"></div><div class="jsteps" id="jSteps"></div>`;
-  });
-  pollJob();
+  // The playlist opens right away and fills in as tracks download.
+  await closeDlg($("#importDlg"));
+  selectTab("library");
+  toast(`Adding “${url}”…`);
+  followSync(url, job, true);
 }
 async function pollJob() {
   if (!importJob) return;
@@ -1780,6 +1847,42 @@ function finishJob(j) {
     go.onclick = () => $("#importBtn").click();
   }
 }
+// Download a track that failed (or isn't offered) from a link the user
+// found: a SoundCloud track, a YouTube video, or an audio file on the web.
+function relink(r) {
+  if (!r?.sc || !cur.data?.sc) return;
+  const d = $("#confirm"), url = cur.data.sc.url;
+  const why = stepFor(r)?.note || r.note || "";
+  $("#confTitle").textContent = "Use another link";
+  $("#confBody").innerHTML = `<p style="margin-top:0">Paste a link for <b>${esc(r.sc.title)}</b>. SuperSync downloads it into this playlist, in this track's place.</p>
+    ${why ? `<div class="muted" style="font-size:12.5px;margin-bottom:10px">Why it didn't download: ${esc(why)}</div>` : ""}
+    <input type="text" id="relinkUrl" placeholder="SoundCloud track, YouTube video or audio file link" autocomplete="off" spellcheck="false" style="width:100%;font-size:14px;padding:11px 13px">
+    <div class="muted" style="font-size:12.5px;margin-top:8px">A free-download page (Hypeddit, Toneden…) usually needs you to download the file yourself; you can then drop it in your music folder and rescan.</div>`;
+  $("#confYes").textContent = "Download";
+  $("#confYes").disabled = false;
+  openDlg(d);
+  setTimeout(() => $("#relinkUrl")?.focus(), 80);
+  $("#confNo").onclick = () => closeDlg(d);
+  const go = async () => {
+    const link = $("#relinkUrl").value.trim();
+    if (!link) return;
+    const b = $("#confYes");
+    b.disabled = true; morphButton(b, '<span class="spin"></span>Downloading');
+    try {
+      const res = await api("sc/relink", { playlist: url, scId: r.sc.id, url: link });
+      await closeDlg(d);
+      toast(res.waiting ? `Downloaded “${r.sc.title}”. It joins the playlist when rekordbox closes.` : `Added “${r.sc.title}” to the playlist.`, "ok");
+      await loadLibrary();
+      openList(res.playlistId || cur.id, { quiet: true });
+    } catch (e) {
+      toast(e.message, "err");
+      b.disabled = false; morphButton(b, "Download");
+    }
+  };
+  $("#confYes").onclick = go;
+  $("#relinkUrl").onkeydown = e => { if (e.key === "Enter") go(); };
+}
+
 async function applyPending() {
   setBusy(+1);
   try {

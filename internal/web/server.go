@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,6 +28,7 @@ import (
 	"supersync/internal/app"
 	"supersync/internal/rbdb"
 	"supersync/internal/update"
+	"supersync/internal/window"
 )
 
 //go:embed static
@@ -44,6 +46,8 @@ type server struct {
 	port    int
 	// restarting is set while an update restarts SuperSync.
 	restarting atomic.Bool
+	quitting   atomic.Bool
+	inWindow   bool // showing its own app window (not a browser tab)
 
 	mu       sync.Mutex
 	scanning *progress
@@ -57,22 +61,21 @@ type progress struct {
 }
 
 // Serve runs the UI until the process is killed.
-func Serve(a *app.App, port int, openBrowser bool, version string) error {
+// Serve runs SuperSync's app. With showUI it opens the app window (or, where
+// there's none, a browser tab); without it, it only serves (for testing).
+func Serve(a *app.App, port int, showUI bool, version string) error {
 	if port == 0 {
 		port = defaultPort
 	}
 	s := &server{app: a, token: loadToken(), version: version}
-	update.Cleanup()
-	s.upd = update.New(version)
-	go a.Background(nil) // scheduled syncs, auto-apply when rekordbox closes
-	go s.updateLoop()
+	useWindow := showUI && window.Supported() && os.Getenv("SUPERSYNC_BROWSER") == ""
 
 	// Restarted after an update: take the same port back (the old process is
-	// just letting go of it) and don't open another browser tab.
+	// just letting go of it). The window reopens; a browser tab reloads by itself.
 	restarted := false
 	if p, err := strconv.Atoi(os.Getenv(restartPortEnv)); err == nil && p > 0 {
 		os.Unsetenv(restartPortEnv)
-		port, openBrowser, restarted = p, false, true
+		port, restarted = p, true
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	for i := 0; err != nil && restarted && i < 60; i++ {
@@ -80,11 +83,11 @@ func Serve(a *app.App, port int, openBrowser bool, version string) error {
 		ln, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	}
 	if err != nil {
-		// Already running? Then just open it.
+		// Already running? Then bring it forward.
 		if isRunning(port) {
 			u := s.url(port)
 			fmt.Println("SuperSync is already running:", u)
-			if openBrowser {
+			if showUI && !s.focusRunning(port) {
 				open(u)
 			}
 			return nil
@@ -97,23 +100,104 @@ func Serve(a *app.App, port int, openBrowser bool, version string) error {
 	s.port = port
 	u := s.url(port)
 
+	if useWindow {
+		logToFile() // no terminal to print to
+	}
+	update.Cleanup()
+	s.upd = update.New(version)
+	go a.Background(nil) // scheduled syncs, auto-apply when rekordbox closes
+	go s.updateLoop()
+
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("supersync")) })
 	s.routes(mux)
-
-	fmt.Printf("SuperSync %s is running at\n\n  %s\n\nLeave this window open while you use it; close it to quit.\n", version, u)
-	if openBrowser {
-		go func() { time.Sleep(300 * time.Millisecond); open(u) }()
-	}
 	srv := &http.Server{Handler: s.guard(mux), ReadHeaderTimeout: 10 * time.Second}
 	s.srv, s.ln = srv, ln
+
+	fmt.Printf("SuperSync %s is running at\n\n  %s\n\n", version, u)
+	if useWindow {
+		s.inWindow = true
+		go srv.Serve(ln)
+		// The window runs on the main thread until SuperSync quits.
+		if window.Run(window.Options{URL: u, Title: "SuperSync", Width: 1360, Height: 880,
+			DataDir: filepath.Join(app.DataDir(), "WebView2"), OnClose: s.shutdown}) {
+			if s.restarting.Load() {
+				select {} // an update is restarting SuperSync
+			}
+			return nil
+		}
+		s.inWindow = false // no web view on this computer: use the browser
+		fmt.Println("No app window available; opening your browser instead.")
+		if !restarted {
+			open(u)
+		}
+		select {}
+	}
+	if showUI && !restarted {
+		fmt.Println("Leave this window open while you use it; close it to quit.")
+		go func() { time.Sleep(300 * time.Millisecond); open(u) }()
+	}
 	err = srv.Serve(ln)
-	if s.restarting.Load() {
-		select {} // the update is restarting SuperSync; don't exit first
+	if s.restarting.Load() || s.quitting.Load() {
+		select {} // restarting or quitting: that goroutine exits the process
 	}
 	return err
+}
+
+// shutdown runs as SuperSync quits: it waits for a library write in
+// progress to finish, and keeps new ones from starting.
+func (s *server) shutdown() {
+	if s.quitting.Swap(true) {
+		return
+	}
+	rbdb.HoldWrites() // never released: the process is ending
+}
+
+// quit closes SuperSync from the page (its Quit button or menu).
+func (s *server) quit() {
+	if s.inWindow {
+		window.Close() // the window's closing runs shutdown
+		return
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond) // let the reply reach the page
+		s.shutdown()
+		os.Exit(0)
+	}()
+}
+
+// focusRunning asks an already-running SuperSync to bring its window forward.
+func (s *server) focusRunning(port int) bool {
+	req, _ := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/api/focus", port), strings.NewReader("{}"))
+	req.Header.Set("X-SuperSync-Token", s.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Window bool `json:"window"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	return resp.StatusCode == 200 && out.Window
+}
+
+// logToFile sends output to SuperSync.log in the data folder, since an app
+// started from its icon has no terminal. The previous run's log is kept.
+func logToFile() {
+	dir := app.DataDir()
+	os.MkdirAll(dir, 0o755)
+	p := filepath.Join(dir, "SuperSync.log")
+	os.Rename(p, p+".1")
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return
+	}
+	os.Stdout, os.Stderr = f, f
+	log.SetOutput(f)
 }
 
 const restartPortEnv = "SUPERSYNC_RESTART_PORT"
