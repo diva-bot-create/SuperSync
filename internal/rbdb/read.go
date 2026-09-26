@@ -48,6 +48,10 @@ type Track struct {
 	// StoredPath is FolderPath exactly as rekordbox stored it, when Path had
 	// to be adjusted to find the file (see localPath).
 	StoredPath string `json:"storedPath,omitempty"`
+	// Cloud: the track is in rekordbox's Cloud Library Sync; CloudLocal is
+	// where rekordbox says the file is on this computer ("" if it isn't).
+	Cloud      bool   `json:"cloud,omitempty"`
+	CloudLocal string `json:"cloudLocal,omitempty"`
 }
 
 // localPath turns the path rekordbox stored into one this computer can
@@ -126,6 +130,15 @@ type Cue struct {
 var FileTypes = map[int]string{1: "mp3", 4: "m4a", 5: "flac", 11: "wav", 12: "aiff"}
 
 func (d *DB) Tracks() ([]*Track, error) {
+	// Tracks in rekordbox's Cloud Library Sync are stored as
+	// "/contents_…/artist/album/file"; contentFile says where each one is on
+	// this computer (rb_local_path).
+	cloudLocal := `IFNULL((SELECT f.rb_local_path FROM contentFile f WHERE f.ContentID = c.ID AND f.Path = c.FolderPath
+		AND IFNULL(f.rb_local_deleted,0) = 0 AND IFNULL(f.rb_local_path,'') <> '' LIMIT 1),'')`
+	var n int
+	if d.SQL.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='contentFile'`).Scan(&n); n == 0 {
+		cloudLocal = `''`
+	}
 	rows, err := d.SQL.Query(`
 		SELECT c.ID, IFNULL(c.FolderPath,''), IFNULL(c.Title,''), IFNULL(a.Name,''), IFNULL(al.Name,''),
 		       IFNULL(g.Name,''), IFNULL(k.ScaleName,''), IFNULL(l.Name,''), IFNULL(c.Commnt,''),
@@ -133,7 +146,8 @@ func (d *DB) Tracks() ([]*Track, error) {
 		       IFNULL(c.SampleRate,0), IFNULL(c.FileType,0), IFNULL(c.FileSize,0), IFNULL(c.Rating,0),
 		       IFNULL(col.Commnt,''), IFNULL(c.DJPlayCount,0), IFNULL(c.StockDate, IFNULL(c.DateCreated,'')),
 		       IFNULL(c.ReleaseYear,0), IFNULL(c.Analysed,0), IFNULL(c.UUID,''), IFNULL(c.AnalysisDataPath,''),
-		       (SELECT COUNT(*) FROM djmdCue q WHERE q.ContentID = c.ID AND IFNULL(q.rb_local_deleted,0) = 0)
+		       (SELECT COUNT(*) FROM djmdCue q WHERE q.ContentID = c.ID AND IFNULL(q.rb_local_deleted,0) = 0),
+		       ` + cloudLocal + `
 		FROM djmdContent c
 		LEFT JOIN djmdArtist a ON a.ID = c.ArtistID
 		LEFT JOIN djmdAlbum al ON al.ID = c.AlbumID
@@ -153,13 +167,18 @@ func (d *DB) Tracks() ([]*Track, error) {
 		var bpm, analysed, rating int
 		if err := rows.Scan(&t.ID, &t.Path, &t.Title, &t.Artist, &t.Album, &t.Genre, &t.Key, &t.Label,
 			&t.Comment, &bpm, &t.Length, &t.BitRate, &t.BitDepth, &t.SampleRate, &t.FileType, &t.FileSize,
-			&rating, &t.Color, &t.PlayCount, &t.Added, &t.Year, &analysed, &t.UUID, &t.Analysis, &t.Cues); err != nil {
+			&rating, &t.Color, &t.PlayCount, &t.Added, &t.Year, &analysed, &t.UUID, &t.Analysis, &t.Cues, &t.CloudLocal); err != nil {
 			return nil, err
 		}
 		t.Stream, t.StreamID = parseStream(t.Path)
 		if t.Stream == "" {
 			t.StoredPath = t.Path
-			t.Path = localPath(t.Path)
+			t.Cloud = IsCloudPath(t.Path)
+			if t.CloudLocal != "" && exists(t.CloudLocal) {
+				t.Path = t.CloudLocal
+			} else {
+				t.Path = localPath(t.Path)
+			}
 		}
 		t.BPM = float64(bpm) / 100
 		t.Rating = stars(rating)
@@ -172,7 +191,75 @@ func (d *DB) Tracks() ([]*Track, error) {
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	resolveCloud(out)
+	return out, nil
+}
+
+// IsCloudPath: a Cloud Library Sync location ("/contents_…/…"), not a path
+// on this computer.
+func IsCloudPath(p string) bool { return strings.HasPrefix(p, "/contents_") }
+
+// resolveCloud finds Cloud Library Sync tracks that contentFile doesn't
+// place: where the synced tracks it does place live tells us the folder the
+// cloud library is kept in on this computer (e.g. inside Dropbox).
+func resolveCloud(ts []*Track) {
+	roots := map[string]bool{}
+	for _, t := range ts {
+		if !t.Cloud || t.CloudLocal == "" {
+			continue
+		}
+		local := filepath.ToSlash(t.CloudLocal)
+		if len(local) > len(t.StoredPath) && strings.EqualFold(local[len(local)-len(t.StoredPath):], t.StoredPath) {
+			roots[local[:len(local)-len(t.StoredPath)]] = true
+		}
+	}
+	if len(roots) == 0 {
+		// Nothing to go on: try where Dropbox and Google Drive usually keep
+		// rekordbox's cloud folder.
+		for _, r := range cloudFolderGuesses() {
+			if exists(r) {
+				roots[filepath.ToSlash(r)] = true
+			}
+		}
+		if len(roots) == 0 {
+			return
+		}
+	}
+	for _, t := range ts {
+		if !t.Cloud || exists(t.Path) {
+			continue
+		}
+		for r := range roots {
+			if c := filepath.FromSlash(r + t.StoredPath); exists(c) {
+				t.Path = c
+				break
+			}
+		}
+	}
+}
+
+func cloudFolderGuesses() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	gs := []string{
+		filepath.Join(home, "Dropbox", "rekordbox"),
+		filepath.Join(home, "Dropbox (Personal)", "rekordbox"),
+		filepath.Join(home, "Google Drive", "rekordbox"),
+		filepath.Join(home, "Google Drive", "My Drive", "rekordbox"),
+		filepath.Join(home, "My Drive", "rekordbox"),
+		filepath.Join(home, "Library", "CloudStorage", "Dropbox", "rekordbox"),
+	}
+	if runtime.GOOS == "windows" {
+		for _, d := range "GHIJ" {
+			gs = append(gs, string(d)+`:\My Drive\rekordbox`)
+		}
+	}
+	return gs
 }
 
 // rekordbox stores ratings as 0, 51, 102, 153, 204, 255.

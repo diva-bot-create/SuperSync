@@ -10,6 +10,9 @@ import (
 
 // MissingReason explains why a track's file can't be found at path.
 func MissingReason(path string) string {
+	if strings.HasPrefix(path, "/contents_") {
+		return "This track is in rekordbox's Cloud Library Sync and isn't downloaded to this computer. Download it in rekordbox (or make your cloud folder available offline), then click Rescan."
+	}
 	p := filepath.FromSlash(path)
 	switch {
 	case runtime.GOOS == "darwin" && strings.HasPrefix(p, "/Volumes/"):

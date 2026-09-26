@@ -349,7 +349,7 @@ func (s *server) routes(mux *http.ServeMux) {
 		}
 		info := a.Src.Info()
 		fmt.Fprintf(&b, "Library: %s at %s\nDownload folder: %s\n", info.Kind, info.Path, a.Cfg.MusicDir)
-		var total, streams, missing, noAccess, adjusted int
+		var total, streams, missing, noAccess, adjusted, cloud int
 		var samples []string
 		for _, t := range a.Src.Tracks() {
 			total++
@@ -359,6 +359,9 @@ func (s *server) routes(mux *http.ServeMux) {
 			}
 			if t.StoredPath != "" && t.StoredPath != t.Path {
 				adjusted++
+			}
+			if t.Cloud {
+				cloud++
 			}
 			_, err := os.Stat(t.Path)
 			if err == nil {
@@ -372,10 +375,10 @@ func (s *server) routes(mux *http.ServeMux) {
 			if len(samples) < 8 {
 				dir := filepath.Dir(filepath.FromSlash(t.Path))
 				_, derr := os.Stat(dir)
-				samples = append(samples, fmt.Sprintf("- stored: %q\n  looked at: %q\n  error: %v\n  folder exists: %v", t.StoredPath, t.Path, err, derr == nil))
+				samples = append(samples, fmt.Sprintf("- stored: %q\n  looked at: %q\n  cloud: %v, rekordbox's local copy: %q\n  error: %v\n  folder exists: %v", t.StoredPath, t.Path, t.Cloud, t.CloudLocal, err, derr == nil))
 			}
 		}
-		fmt.Fprintf(&b, "Tracks: %d (%d streaming, %d can't be found, %d can't be read, %d found under another spelling)\n", total, streams, missing, noAccess, adjusted)
+		fmt.Fprintf(&b, "Tracks: %d (%d streaming, %d in Cloud Library Sync, %d can't be found, %d can't be read, %d found elsewhere than stored)\n", total, streams, cloud, missing, noAccess, adjusted)
 		if len(samples) > 0 {
 			b.WriteString("Examples:\n" + strings.Join(samples, "\n") + "\n")
 		}
