@@ -496,9 +496,9 @@ func (s *server) routes(mux *http.ServeMux) {
 			Restart bool `json:"restart"`
 		}
 		decodeOptional(r, &req)
-		var n int
-		err := a.WithRekordboxClosed(req.Restart, func() (err error) { n, err = a.ApplyPending(); return })
-		reply(w, map[string]int{"applied": n}, err)
+		before := len(a.PendingChanges())
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { _, err = a.ApplyPending(); return })
+		reply(w, map[string]int{"applied": before - len(a.PendingChanges())}, err)
 	})
 	mux.HandleFunc("POST /api/sync/all", func(w http.ResponseWriter, r *http.Request) {
 		go a.SyncAll()

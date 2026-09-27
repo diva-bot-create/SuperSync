@@ -158,6 +158,9 @@ play it, click a cue to jump to it, or press keys 1–8 for hot cues A–H. Spac
     rekordbox (forcing it if it doesn't close within a few seconds), saves the changes, and opens
     rekordbox again. **Don't do this during a set.**
 
+Whenever SuperSync restarts rekordbox, for anything, it also saves every change that was waiting,
+so one restart catches everything up.
+
 SuperSync never closes rekordbox without asking.
 
 ## Questions

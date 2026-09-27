@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -245,6 +246,11 @@ func (a *App) WithRekordboxClosed(restart bool, fn func() error) error {
 	app, err := rbdb.Quit(8 * time.Second)
 	if err != nil {
 		return err
+	}
+	// While it's closed, do everything that was waiting for it too (oldest
+	// first), not just the thing the user clicked.
+	if _, perr := a.ApplyPending(); perr != nil {
+		log.Printf("applying waiting changes: %v", perr) // they stay waiting
 	}
 	ferr := fn()
 	if rerr := rbdb.Relaunch(app); rerr != nil && ferr == nil {

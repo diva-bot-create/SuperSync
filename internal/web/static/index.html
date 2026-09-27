@@ -687,7 +687,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <p style="margin-top:0">rekordbox is open, and SuperSync can only change the library while it's closed. To <b id="quitWhat"></b>, SuperSync will:</p>
     <ol class="steps">
       <li>quit rekordbox: a normal quit first, then a force-quit if it hasn't closed within a few seconds;</li>
-      <li>back up the library and make the change;</li>
+      <li>back up the library and make the change<span id="quitAlso"></span>;</li>
       <li>open rekordbox again.</li>
     </ol>
     <div class="warn">If you're playing, cancel: the decks stop. A force-quit skips any rekordbox dialog and loses anything unsaved in it, such as an export in progress. Your library is backed up first either way.</div>
@@ -985,6 +985,8 @@ async function api(path, body) {
 function askQuitRekordbox(what) {
   const d = $("#quitDlg");
   $("#quitWhat").textContent = what;
+  const n = (S.pending || []).length;
+  $("#quitAlso").textContent = n && what !== "add the waiting changes" ? `, along with the ${n} change${n === 1 ? "" : "s"} already waiting` : "";
   openDlg(d);
   return new Promise(res => {
     const finish = ok => { d.removeEventListener("cancel", onCancel); closeDlg(d); res(ok); };
@@ -1004,7 +1006,14 @@ async function withRekordbox(what, call) {
     if (e.code !== "rekordbox_running") throw e;
     if (!await askQuitRekordbox(what)) return null;
     toast("Asking rekordbox to quit…");
-    return await call(true);
+    const waiting = (S.pending || []).length;
+    const res = await call(true);
+    if (waiting) {
+      // The restart added everything that was waiting too.
+      refresh();
+      loadLibrary().then(() => { if (cur.id) openList(cur.id, { quiet: true }); }).catch(() => {});
+    }
+    return res;
   }
 }
 
