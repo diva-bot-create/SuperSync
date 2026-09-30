@@ -368,7 +368,8 @@ func TestLocalPath(t *testing.T) {
 	if got := localPath(f); got != f {
 		t.Fatalf("existing path changed: %q", got)
 	}
-	if got := localPath("file://localhost" + filepath.ToSlash(f)); got != f {
+	// rekordbox writes file://localhost/C:/… on Windows, file://localhost/Users/… on a Mac.
+	if got := localPath("file://localhost/" + strings.TrimPrefix(filepath.ToSlash(f), "/")); got != f {
 		t.Fatalf("file:// address not resolved: %q", got)
 	}
 	if got := localPath("/nowhere/at/all.mp3"); got != "/nowhere/at/all.mp3" {
