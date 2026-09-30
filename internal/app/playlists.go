@@ -22,6 +22,9 @@ func (a *App) EditPlaylists(e PlaylistEdit) (*PlaylistEditResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if e.Op == "remove" {
+		go a.checkDropped("") // a synced playlist's songs taken off here
+	}
 	a.State.mu.Lock()
 	if len(res.Deleted) > 0 {
 		gone := map[string]bool{}

@@ -163,6 +163,11 @@ func (a *App) remapEntriesLocked(m map[string]string) {
 				e.TrackID, e.File = to, ""
 			}
 		}
+		for i, id := range p.Applied {
+			if to, ok := m[id]; ok {
+				p.Applied[i] = to
+			}
+		}
 	}
 }
 

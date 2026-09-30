@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,9 @@ type HistoryEntry struct {
 	// Before is the synced playlists' state just before (SCPlaylists and
 	// Pending, as saved in state.json).
 	Before json.RawMessage `json:"before,omitempty"`
+	// SC: a change to a SoundCloud playlist (no library backup), with its
+	// tracks from before.
+	SC *SCRestore `json:"sc,omitempty"`
 }
 
 const historyMax = 25
@@ -102,6 +106,17 @@ func (a *App) record(label, backup string, before json.RawMessage, moves []analy
 	saveHistory(h)
 }
 
+// recordSC adds a change to a SoundCloud playlist to the history.
+func (a *App) recordSC(label string, before json.RawMessage, restore *SCRestore) {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	h := append(loadHistory(), &HistoryEntry{ID: newID(), At: time.Now(), Label: label, Auto: true, Before: before, SC: restore})
+	if len(h) > historyMax {
+		h = h[len(h)-historyMax:]
+	}
+	saveHistory(h)
+}
+
 // amendLast changes the newest entry (a swap folds its "add the new file"
 // write into the clean-up that follows).
 func amendLast(f func(e *HistoryEntry)) {
@@ -136,9 +151,15 @@ func (a *App) History() []HistoryItem {
 	out := make([]HistoryItem, 0, len(h))
 	for i := len(h) - 1; i >= 0; i-- {
 		e := h[i]
-		_, err := os.Stat(e.Backup)
+		ok := false
+		if e.Backup != "" {
+			_, err := os.Stat(e.Backup)
+			ok = err == nil
+		} else if e.SC != nil {
+			ok = a.Cfg.SCToken != ""
+		}
 		out = append(out, HistoryItem{ID: e.ID, At: e.At, Label: e.Label, Auto: e.Auto, Files: len(e.Moves),
-			Undoable: err == nil, After: len(h) - 1 - i, Changed: changed})
+			Undoable: ok, After: len(h) - 1 - i, Changed: changed})
 	}
 	return out
 }
@@ -177,11 +198,35 @@ func (a *App) UndoTo(id string) (string, error) {
 		return "", errors.New("that change isn't in the history any more")
 	}
 	e := h[at]
-	if _, err := os.Stat(e.Backup); err != nil {
-		return "", errors.New("the backup from before that change has been cleared out (SuperSync keeps the last 10)")
+	// The library as it was before this change: the backup of the first
+	// library change from here on (SoundCloud changes don't have one).
+	backup := ""
+	for _, x := range h[at:] {
+		if x.Backup != "" {
+			backup = x.Backup
+			break
+		}
 	}
-	if err := a.Src.Restore(e.Backup); err != nil {
-		return "", err
+	if backup != "" {
+		if _, err := os.Stat(backup); err != nil {
+			return "", errors.New("the backup from before that change has been cleared out (SuperSync keeps the last 10)")
+		}
+	}
+	// SoundCloud playlists first (the network can fail; nothing's changed
+	// yet if it does), newest change first so each ends as it was.
+	restored := map[string]bool{}
+	for i := len(h) - 1; i >= at; i-- {
+		if r := h[i].SC; r != nil {
+			if err := a.SC.SetPlaylistTracks(a.Cfg.SCToken, r.PlaylistID, r.Tracks); err != nil {
+				return "", fmt.Errorf("couldn't put the songs back on SoundCloud: %w", err)
+			}
+			restored[r.URL] = true
+		}
+	}
+	if backup != "" {
+		if err := a.Src.Restore(backup); err != nil {
+			return "", err
+		}
 	}
 	// Files back where they were, newest change first.
 	lost := 0
@@ -223,6 +268,18 @@ func (a *App) UndoTo(id string) (string, error) {
 	saveHistory(loadHistory()[:at])
 	historyMu.Unlock()
 	a.rebuild()
+	// Songs back on a SoundCloud playlist go back in its library playlist.
+	for u := range restored {
+		if sp := a.scByURLLocked(u); sp != nil {
+			a.State.mu.Lock()
+			entries := append([]*SCEntry(nil), sp.Entries...)
+			title := sp.Title
+			a.State.mu.Unlock()
+			if err := a.applyChange(scChange("SoundCloud", title, u, entries, false)); err != nil && !errors.Is(err, rbdb.ErrRunning) {
+				log.Printf("putting songs back in %s: %v", title, err)
+			}
+		}
+	}
 	go a.Scan(nil)
 	if lost > 0 {
 		bin := "Trash"

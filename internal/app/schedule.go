@@ -18,7 +18,7 @@ func (a *App) Background(stop <-chan struct{}) {
 	go a.fixStereo()
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
-	var closedSince, lastBetter time.Time
+	var closedSince, lastBetter, lastDrops time.Time
 	for {
 		select {
 		case <-stop:
@@ -26,6 +26,11 @@ func (a *App) Background(stop <-chan struct{}) {
 		case <-tick.C:
 		}
 		a.Refresh()
+		// Songs taken off synced playlists (in rekordbox or here).
+		if time.Since(lastDrops) > time.Minute {
+			lastDrops = time.Now()
+			a.checkDropped("")
+		}
 		// Every few minutes, look for better copies the user has downloaded.
 		if time.Since(lastBetter) > 5*time.Minute && a.Lib != nil {
 			lastBetter = time.Now()

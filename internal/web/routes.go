@@ -46,6 +46,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			Cleanup     *string `json:"cleanupAction"`
 			MirrorRemov *bool   `json:"mirrorRemovals"`
 			AutoSwap    *bool   `json:"autoSwap"`
+			TwoWay      *bool   `json:"twoWay"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -79,6 +80,10 @@ func (s *server) routes(mux *http.ServeMux) {
 		if err == nil && req.KeepRunning != nil {
 			a.Cfg.QuitOnClose = !*req.KeepRunning
 			window.SetKeepRunning(*req.KeepRunning)
+			err = a.Cfg.Save()
+		}
+		if err == nil && req.TwoWay != nil {
+			a.Cfg.NoTwoWay = !*req.TwoWay
 			err = a.Cfg.Save()
 		}
 		if err == nil && req.AutoSwap != nil {
@@ -511,6 +516,31 @@ func (s *server) routes(mux *http.ServeMux) {
 		err := a.WithRekordboxClosed(req.Restart, func() (err error) { note, err = a.UndoCleanupNote(); return })
 		reply(w, map[string]any{"ok": true, "note": note}, err)
 	})
+	mux.HandleFunc("POST /api/sc/drop-confirm", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Playlist string `json:"playlist"`
+			Remove   bool   `json:"remove"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		reply(w, map[string]bool{"ok": true}, a.ConfirmDrops(req.Playlist, req.Remove))
+	})
+	mux.HandleFunc("POST /api/sc/undrop", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Playlist string `json:"playlist"`
+			SCID     int64  `json:"scId"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		err := a.Undrop(req.Playlist, req.SCID)
+		waiting := errors.Is(err, rbdb.ErrRunning) // added when rekordbox closes
+		if waiting {
+			err = nil
+		}
+		reply(w, map[string]bool{"ok": true, "waiting": waiting}, err)
+	})
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
 		reply(w, a.History(), nil)
 	})
@@ -778,7 +808,7 @@ func (s *server) trackList(pid string) *trackList {
 	out := &trackList{ID: pid, Tiers: map[string]int{}}
 	add := func(r *Row) {
 		out.Rows = append(out.Rows, r)
-		if r.Tier != "" {
+		if r.Tier != "" && r.Status != "dropped" {
 			out.Tiers[r.Tier]++
 		}
 	}
@@ -866,7 +896,7 @@ func (s *server) scRows(sp *app.SCPlaylist, add func(*Row)) {
 			}
 		}
 		r.SC, r.Status, r.Note, r.Maybe = e.SC, e.Status, e.Note, e.Maybe
-		if r.ID != "" && r.Status != "downloaded" {
+		if r.ID != "" && r.Status != "downloaded" && r.Status != "dropped" {
 			r.Status = "have"
 		}
 		add(r)
@@ -1036,6 +1066,7 @@ type state struct {
 	Cleanup      string          `json:"cleanupAction"`          // trash, delete or folder
 	MirrorRemov  bool            `json:"mirrorRemovals"`         // songs taken off a synced playlist leave it here too
 	AutoSwap     bool            `json:"autoSwap"`               // swap in better copies of cue-less tracks by itself
+	TwoWay       bool            `json:"twoWay"`                 // songs taken off here come off the user's SoundCloud playlist too
 	KeepRunning  bool            `json:"keepRunning"`
 	OpenAtLogin  bool            `json:"openAtLogin"`
 	CanAutorun   bool            `json:"canAutorun"`
@@ -1061,6 +1092,7 @@ func (s *server) state() state {
 	st.KeepRunning, st.OpenAtLogin, st.CanAutorun = !a.Cfg.QuitOnClose, a.Cfg.OpenAtLogin, autostart.Supported()
 	st.MirrorRemov = !a.Cfg.KeepRemovedTracks
 	st.AutoSwap = !a.Cfg.NoAutoSwap
+	st.TwoWay = !a.Cfg.NoTwoWay
 	if st.Cleanup = a.Cfg.CleanupAction; st.Cleanup == "" {
 		st.Cleanup = "trash"
 	}

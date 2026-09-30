@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -679,6 +680,23 @@ func (s *xmlSource) Apply(c *Change) (*Applied, error) {
 				pl.Keys = append(pl.Keys, k)
 				have[k] = true
 			}
+		}
+		if c.Ordered {
+			// The synced songs in the playlist's order, then any added by hand.
+			pos := map[string]int{}
+			for i, k := range keys {
+				if _, ok := pos[k]; !ok {
+					pos[k] = i
+				}
+			}
+			sort.SliceStable(pl.Keys, func(i, j int) bool {
+				pi, iok := pos[pl.Keys[i]]
+				pj, jok := pos[pl.Keys[j]]
+				if iok != jok {
+					return iok
+				}
+				return iok && pi < pj
+			})
 		}
 		res.PlaylistID = pl.ID
 	}

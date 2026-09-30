@@ -54,6 +54,21 @@ type SCPlaylist struct {
 	ToRemove []string `json:"toRemove,omitempty"`
 	// Removed is how many left the playlist at the last sync.
 	Removed int `json:"removed,omitempty"`
+
+	// Two-way removals. SCID and SCOwnerID are SoundCloud's numbers for the
+	// playlist and its owner; Mine: it belongs to the SoundCloud login.
+	SCID      int64 `json:"scId,omitempty"`
+	SCOwnerID int64 `json:"scOwnerId,omitempty"`
+	Mine      bool  `json:"mine,omitempty"`
+	// Applied: library tracks SuperSync has put in the playlist. One that's
+	// no longer there was taken off it (in rekordbox or SuperSync).
+	Applied []string `json:"applied,omitempty"`
+	// Dropped: songs taken off the library playlist, which syncs leave out.
+	// AskDrop: ones also waiting for the user's OK to take them off the
+	// SoundCloud playlist (a lot at once, or a failed try).
+	Dropped []int64 `json:"dropped,omitempty"`
+	AskDrop []int64 `json:"askDrop,omitempty"`
+	AskNote string  `json:"askNote,omitempty"`
 }
 
 // SCEntry is one SoundCloud track and where it stands in the library.
@@ -286,6 +301,8 @@ func (j *Job) running() bool {
 
 func (a *App) runImport(j *Job, link string) {
 	fail := func(err error) { j.set(func() { j.Status, j.Message = "error", err.Error() }) }
+	// Songs taken off the playlist here since the last sync stay off.
+	a.checkDropped(link)
 	rm, err := a.fetchRemote(link)
 	if err != nil {
 		fail(err)
@@ -304,7 +321,21 @@ func (a *App) runImport(j *Job, link string) {
 		return
 	}
 	res := a.Compare(pl, lib)
-	scp := &SCPlaylist{URL: link, Source: rm.kind, Title: pl.Title, Owner: pl.Owner, ImportedAt: time.Now()}
+	scp := &SCPlaylist{URL: link, Source: rm.kind, Title: pl.Title, Owner: pl.Owner, ImportedAt: time.Now(),
+		SCID: pl.ID, SCOwnerID: pl.OwnerID}
+	if rm.kind == "soundcloud" && pl.OwnerID != 0 {
+		if me := a.scMe(); me != 0 {
+			scp.Mine = me == pl.OwnerID
+		}
+	}
+	dropped := map[int64]bool{}
+	if old := a.scByURLLocked(link); old != nil {
+		a.State.mu.Lock()
+		for _, id := range append(append([]int64(nil), old.Dropped...), old.AskDrop...) {
+			dropped[id] = true
+		}
+		a.State.mu.Unlock()
+	}
 	for _, t := range pl.Tracks {
 		if t.Artwork != "" {
 			scp.Artwork = t.Artwork
@@ -325,6 +356,13 @@ func (a *App) runImport(j *Job, link string) {
 			}
 		}
 		switch {
+		case dropped[row.SC.ID]:
+			e.Status = "dropped" // taken off the playlist here: left out
+			if row.Match != nil {
+				if tr := a.TrackByPath(row.Match.Path); tr != nil {
+					e.TrackID = tr.ID // for Put back
+				}
+			}
 		case row.SC.Unavailable:
 			e.Status, e.Note = "unavailable", "Removed or made private on SoundCloud"
 		case row.Status == Have && !exists(row.Match.Path) && a.TrackByPath(row.Match.Path) == nil:
@@ -345,7 +383,10 @@ func (a *App) runImport(j *Job, link string) {
 			e.Status = "missing"
 		}
 		j.set(func() {
-			step.State = map[string]string{"have": "have", "maybe": "maybe", "unavailable": "skipped"}[e.Status]
+			step.State = map[string]string{"have": "have", "maybe": "maybe", "unavailable": "skipped", "dropped": "skipped"}[e.Status]
+			if e.Status == "dropped" {
+				e.Note = "Taken off the playlist here"
+			}
 			step.Note = e.Note
 			if step.State == "" {
 				step.State = "queued"
@@ -366,6 +407,9 @@ func (a *App) runImport(j *Job, link string) {
 			still[e.SC.ID] = true
 		}
 		scp.ToRemove = old.ToRemove
+		scp.Applied, scp.Dropped, scp.AskDrop, scp.AskNote = old.Applied, old.Dropped, old.AskDrop, old.AskNote
+		// Songs gone from SoundCloud needn't be remembered as taken off.
+		scp.Dropped, scp.AskDrop = keepIDs(scp.Dropped, still), keepIDs(scp.AskDrop, still)
 		for _, e := range old.Entries {
 			if e.SC != nil && !still[e.SC.ID] && e.TrackID != "" {
 				scp.ToRemove = append(scp.ToRemove, e.TrackID)
@@ -538,6 +582,8 @@ func scChange(folder, title, link string, entries []*SCEntry, interim bool) *Cha
 		SCURL: link, CreatedAt: time.Now(), Interim: interim, Ordered: !interim}
 	for _, e := range entries {
 		switch {
+		case e.Status == "dropped":
+			continue // taken off the playlist here
 		case e.TrackID != "":
 			ch.Items = append(ch.Items, ChangeItem{TrackID: e.TrackID, SCID: e.SC.ID})
 		case e.File != "":
@@ -638,6 +684,16 @@ func (a *App) afterApply(ch *Change, res *Applied) {
 				e.TrackID = id
 			}
 		}
+		have := map[string]bool{}
+		for _, id := range sp.Applied {
+			have[id] = true
+		}
+		for _, id := range res.TrackIDs {
+			if id != "" && !have[id] {
+				have[id] = true
+				sp.Applied = append(sp.Applied, id)
+			}
+		}
 	}
 	a.State.save()
 	a.State.mu.Unlock()
@@ -686,6 +742,7 @@ func (a *App) removeGone(link string) {
 	}
 	a.State.mu.Lock()
 	sp.ToRemove, sp.Removed = nil, len(ids)
+	sp.Applied = dropStrings(sp.Applied, ids)
 	a.State.save()
 	a.State.mu.Unlock()
 }

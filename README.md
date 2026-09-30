@@ -87,6 +87,12 @@ while SuperSync is open. Songs taken off the SoundCloud playlist are taken off t
 too (they stay in your collection); songs you added to the playlist yourself in rekordbox stay.
 You can turn that off in Settings.
 
+It works the other way too. Take a song off a synced playlist, in rekordbox or in SuperSync, and
+later syncs leave it out. If it's your own SoundCloud playlist and you've added your SoundCloud login,
+SuperSync takes the song off the SoundCloud playlist as well (within a minute or so). If you take
+off a lot at once, it asks first, and **History** can put them back. Songs you've taken off show as
+**TAKEN OFF**; right-click one and choose **Put back** to add it again.
+
 What gets downloaded:
 - The artist's own file when they've switched on SoundCloud's download button. This is often a
   WAV, but only if you've added your SoundCloud login in Settings; the instructions are on that

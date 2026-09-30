@@ -198,6 +198,7 @@ a.sctitle:hover { color: var(--accent); }
 .copy.drop .path { color: var(--muted); }
 .copy.drop .path span { background-size: 100% 1.5px; }
 .gwarn:empty { display: none; }
+.asksc { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--maybe-soft); color: var(--text); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
 .hist { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
 .hist:first-child { border-top: 0; }
 #histList { max-height: 55vh; overflow: auto; }
@@ -618,6 +619,8 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         </div>
         <label class="row" style="margin-top:10px;gap:8px;cursor:pointer"><input type="checkbox" id="autoApply" style="accent-color:var(--accent)"> Add waiting changes to rekordbox as soon as it's closed</label>
         <label class="row" style="margin-top:6px;gap:8px;cursor:pointer"><input type="checkbox" id="mirrorRemovals" style="accent-color:var(--accent)"> When a song is taken off the SoundCloud or YouTube playlist, take it off the rekordbox playlist too</label>
+        <label class="row" style="margin-top:6px;gap:8px;cursor:pointer"><input type="checkbox" id="twoWay" style="accent-color:var(--accent)"> When I take a song off a synced playlist (in rekordbox or here), take it off my SoundCloud playlist too</label>
+        <div class="muted" style="font-size:12.5px;margin:4px 0 0 26px">Only for your own SoundCloud playlists, with your SoundCloud login added above. If you take a lot off at once, SuperSync asks first. Either way, syncs don't add them back here.</div>
         <div class="muted" style="font-size:12.5px;margin:2px 0 0 26px">It stays in your collection, and songs you added to the playlist yourself in rekordbox are left alone.</div>
         <div class="muted" id="syncState" style="margin-top:8px;font-size:12.5px"></div>
         <div class="muted" style="margin-top:6px;font-size:12.5px">SuperSync never quits rekordbox on its own. While rekordbox is open, changes wait until you close it, or until you click <b>Restart rekordbox &amp; apply</b>.</div>
@@ -1118,6 +1121,7 @@ async function refresh() {
   $("#autoApply").checked = !!S.autoApply;
   $("#mirrorRemovals").checked = S.mirrorRemovals !== false;
   $("#autoSwap").checked = S.autoSwap !== false;
+  $("#twoWay").checked = S.twoWay !== false;
   paintUpdate();
   paintApp();
   $("#cleanupAction").value = S.cleanupAction || "trash";
@@ -1328,9 +1332,10 @@ async function openList(id, { quiet = false } = {}) {
 function renderListHead(animate) {
   const d = cur.data;
   $("#plName").textContent = d.name;
-  const total = d.rows.reduce((a, r) => a + (r.length || 0), 0);
-  const notIn = d.rows.filter(r => !r.id).length;
-  let meta = `${d.rows.length.toLocaleString()} track${d.rows.length === 1 ? "" : "s"} · ${fmtHM(total)}`;
+  const on = d.rows.filter(r => r.status !== "dropped"); // taken-off songs aren't in the playlist
+  const total = on.reduce((a, r) => a + (r.length || 0), 0);
+  const notIn = on.filter(r => !r.id).length;
+  let meta = `${on.length.toLocaleString()} track${on.length === 1 ? "" : "s"} · ${fmtHM(total)}`;
   if (d.sc) meta += ` · synced from <a href="${esc(d.sc.url)}" target="_blank" rel="noopener">${d.sc.source === "youtube" ? "YouTube" : "SoundCloud"}</a>${notIn ? ` · ${notIn} not in your library` : ""}${d.sc.pending ? " · waiting for rekordbox to close" : ""}`;
   $(".libmain").classList.toggle("sc", !!d.sc);
   renderSyncBtn(animate);
@@ -1338,14 +1343,20 @@ function renderListHead(animate) {
   const noAccess = d.rows.filter(r => r.noAccess).length, gone = d.rows.filter(r => r.missing && !r.noAccess).length;
   if (noAccess) meta += ` · <span class="warnish" title="${esc(NOACCESS_TIP)}">${noAccess} file${noAccess === 1 ? "" : "s"} SuperSync isn't allowed to read</span>`;
   if (gone) meta += ` · ${gone} file${gone === 1 ? "" : "s"} not found (<button class="link" id="findMoved">find them</button>)`;
+  const ask = d.sc?.askDrop?.length || 0;
+  if (ask) meta += `<div class="asksc">You took ${ask} song${ask === 1 ? "" : "s"} off this playlist. ${d.sc.askNote ? esc(d.sc.askNote) + " " : ""}Take ${ask === 1 ? "it" : "them"} off your SoundCloud playlist too?
+    <button class="small" id="dropYes">Take off SoundCloud</button><button class="small" id="dropNo">Keep on SoundCloud</button></div>`;
   $("#plMeta").innerHTML = meta;
+  $("#dropYes")?.addEventListener("click", () => confirmDrops(true));
+  $("#dropNo")?.addEventListener("click", () => confirmDrops(false));
   fitGetColumn();
   $("#findMoved")?.addEventListener("click", findMoved);
   $("#tierChips").innerHTML = tiers.map(t => `<button class="tier ${t}" data-tier="${t}" aria-pressed="${tierFilter === t}" title="${TIER_TIP[t]}">${TIER_LABEL[t]} ${d.tiers[t]}</button>`).join("")
     + [["need", "none", "NEED", "Not in your library yet: the next sync downloads them"],
        ["waiting", "hq", "WAITING", "Downloaded, joining your rekordbox playlist when rekordbox closes"],
        ["maybe", "normal", "MAYBE", "Might already be in your library: tell SuperSync whether they're the same"],
-       ["failed", "low", "FAILED", "Couldn't be downloaded (hover a track to see why)"]]
+       ["failed", "low", "FAILED", "Couldn't be downloaded (hover a track to see why)"],
+       ["off", "none", "TAKEN OFF", "Songs you took off this playlist: syncs leave them out"]]
       .map(([k, cls, label, tip]) => { const n = d.rows.filter(r => rowState(r) === k).length;
         return n ? `<button class="tier ${cls}" data-tier="${k}" aria-pressed="${tierFilter === k}" title="${tip}">${label} ${n}</button>` : ""; }).join("");
   if (animate) { rise([$("#plName"), $("#plMeta")], { gap: 60, dist: 6 }); rise($("#tierChips").children, { gap: 40, dist: 6 }); }
@@ -1490,7 +1501,7 @@ function paintRow(el, r, i) {
   el.classList.toggle("sel", i === selIdx);
   el.classList.toggle("playing", !!playId(r) && playId(r) === nowPlaying?.id);
   // !!: toggle(name, undefined) flips the class instead of clearing it.
-  el.classList.toggle("ghost", !!((!r.id && !r.file) || r.missing));
+  el.classList.toggle("ghost", !!((!r.id && !r.file) || r.missing || r.status === "dropped"));
 }
 // Size the buttons column to the widest button in this list (none: no column).
 function fitGetColumn() {
@@ -1527,7 +1538,19 @@ $("#vlist").addEventListener("scroll", () => requestAnimationFrame(() => renderR
 addEventListener("resize", () => { if (cur.data) renderRows(false); });
 
 const relinking = new Set(); // SoundCloud ids being downloaded from a link the user gave
+// Why a song taken off a synced playlist here isn't on it, and whether it
+// came off the SoundCloud playlist too.
+function droppedTip(r) {
+  const sc = cur.data?.sc || {};
+  const asking = (sc.askDrop || []).includes(r.sc?.id);
+  if (asking) return "You took this off the playlist. It's still on SoundCloud until you say (see the top of the playlist). Syncs leave it out here.";
+  if (sc.source === "youtube") return "You took this off the playlist, so syncs leave it out. It's still on the YouTube playlist.";
+  if (sc.mine && S.twoWay && S.hasToken) return "You took this off the playlist, so it's been taken off your SoundCloud playlist too. Undo from History.";
+  const why = !S.hasToken ? "SuperSync doesn't have your SoundCloud login" : !sc.mine ? "it isn't your playlist on SoundCloud" : "taking songs off SoundCloud is turned off in Settings";
+  return `You took this off the playlist, so syncs leave it out. It's still on SoundCloud (${why}).`;
+}
 function tierBadge(r) {
+  if (r.status === "dropped") return `<span class="tier none" title="${esc(droppedTip(r) + " Right-click → Put back to add it again.")}">TAKEN OFF</span>`;
   if (!r.id) {
     if (r.sc && relinking.has(r.sc.id)) return `<span class="tier normal dl" title="Downloading from the link you gave"><i style="width:40%"></i>…</span>`;
     const st = stepFor(r);
@@ -1620,6 +1643,7 @@ function playId(r) {
 // Where a synced playlist's track stands if it isn't in the library:
 // "need" (a sync will get it), "maybe" (possibly already there) or "failed".
 function rowState(r) {
+  if (r.status === "dropped") return "off";
   if (r.id) return "";
   if (r.file && !stepFor(r)) return "waiting";
   const st = stepFor(r)?.state;
@@ -2353,6 +2377,27 @@ function checkCrash() {
   if (S.crash && !crashShown) { crashShown = true; showReport(S.crash); }
 }
 
+// ---------- songs taken off synced playlists ----------
+async function confirmDrops(remove) {
+  const url = cur.data?.sc?.url;
+  if (!url) return;
+  setBusy(+1);
+  try {
+    await api("sc/drop-confirm", { playlist: url, remove });
+    toast(remove ? "Taken off your SoundCloud playlist. Undo from History." : "They stay on SoundCloud; syncs leave them out here.", "ok", remove ? { label: "History", run: showHistory } : undefined);
+  } catch (e) { toast(e.message, "err"); }
+  finally { setBusy(-1); if (cur.id) openList(cur.id, { quiet: true }); }
+}
+async function undrop(r) {
+  const url = cur.data?.sc?.url;
+  if (!url) return;
+  try {
+    const res = await api("sc/undrop", { playlist: url, scId: r.sc.id });
+    toast(res.waiting ? "It goes back in when rekordbox closes." : "Put back in the playlist.", "ok");
+    await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true });
+  } catch (e) { toast(e.message, "err"); }
+}
+
 // ---------- history ----------
 function fmtWhen(t) {
   const d = new Date(t), mins = (Date.now() - d) / 60000;
@@ -2569,7 +2614,8 @@ function trackMenu(r, i) {
     r.id && (r.tier === "low" || r.tier === "normal") && { icon: "♪", label: "I have a better copy: it's in my library…", run: () => betterFromLibrary(r) },
     r.id && { icon: "＋", label: "Add to playlist…", run: () => addToPlaylist([r.id]) },
     r.id && !r.stream && { icon: "⇄", label: "Replace with a track from my library…", run: () => replaceWithLibraryTrack(r) },
-    r.id && cur.id && cur.id !== "all" && !cur.id.startsWith("sc:") && { icon: "−", label: "Remove from this playlist", run: () => removeFromPlaylist(cur.id, [r.id]) },
+    r.id && r.status !== "dropped" && cur.id && cur.id !== "all" && !cur.id.startsWith("sc:") && { icon: "−", label: "Remove from this playlist", run: () => removeFromPlaylist(cur.id, [r.id]) },
+    r.status === "dropped" && sc && cur.data?.sc && { icon: "↩", label: "Put back in this playlist", run: () => undrop(r) },
     !r.id && r.status === "maybe" && { icon: "✓", label: "It's the same track (use my copy)", run: () => resolveMaybe(r, true) },
     r.id && sc && cur.data?.sc && r.status === "have" && { icon: "✕", label: "Not this track (download the SoundCloud one)", run: () => resolveMaybe(r, false) },
     !r.id && r.status === "maybe" && { icon: "⬇", label: "It's different (download this one)", run: () => resolveMaybe(r, false) },
@@ -3300,6 +3346,7 @@ $("#autoSync").onchange = e => saveSetting({ autoSyncHours: Number(e.target.valu
 $("#autoApply").onchange = e => saveSetting({ autoApply: e.target.checked });
 $("#mirrorRemovals").onchange = e => saveSetting({ mirrorRemovals: e.target.checked });
 $("#autoSwap").onchange = e => saveSetting({ autoSwap: e.target.checked });
+$("#twoWay").onchange = e => saveSetting({ twoWay: e.target.checked });
 $("#syncAll").onclick = async () => { try { await api("sync/all", {}); toast("Syncing all playlists…"); setTimeout(refresh, 800); } catch (e) { toast(e.message, "err"); } };
 $("#pickMusic").onclick = async () => {
   const dir = await pick("Choose your download folder", S.musicDir);

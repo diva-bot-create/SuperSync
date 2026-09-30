@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const api = "https://api-v2.soundcloud.com"
+var api = "https://api-v2.soundcloud.com" // a variable so tests can point it at a fake
 
 type Track struct {
 	ID           int64  `json:"id"`
@@ -62,6 +62,10 @@ type Playlist struct {
 	URL    string   `json:"url"`
 	Owner  string   `json:"owner"`
 	Tracks []*Track `json:"tracks"`
+	// ID and OwnerID are SoundCloud's numbers for the playlist and the
+	// account it belongs to (0 for a single track).
+	ID      int64 `json:"id,omitempty"`
+	OwnerID int64 `json:"ownerId,omitempty"`
 }
 
 type Client struct {
@@ -141,7 +145,7 @@ func (c *Client) FetchPlaylist(link string) (*Playlist, error) {
 		}
 	}
 
-	out := &Playlist{Title: p.Title, URL: p.PermalinkURL, Owner: p.User.Username}
+	out := &Playlist{Title: p.Title, URL: p.PermalinkURL, Owner: p.User.Username, ID: p.ID, OwnerID: p.User.ID}
 	for _, st := range p.Tracks {
 		if t, ok := full[st.ID]; ok {
 			out.Tracks = append(out.Tracks, t.convert())
@@ -169,6 +173,7 @@ func (r *rawResource) UnmarshalJSON(b []byte) error {
 }
 
 type rawUser struct {
+	ID       int64  `json:"id"`
 	Username string `json:"username"`
 }
 
@@ -196,6 +201,7 @@ type rawTrack struct {
 }
 
 type rawPlaylist struct {
+	ID           int64      `json:"id"`
 	Title        string     `json:"title"`
 	PermalinkURL string     `json:"permalink_url"`
 	User         rawUser    `json:"user"`

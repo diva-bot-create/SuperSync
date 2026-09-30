@@ -41,6 +41,9 @@ type Config struct {
 	// NoAutoSwap turns off swapping in better copies of tracks without cues
 	// by itself.
 	NoAutoSwap bool `json:"noAutoSwap,omitempty"`
+	// NoTwoWay: songs taken off a synced playlist here stay on the user's
+	// SoundCloud playlist (they're still left out of later syncs).
+	NoTwoWay bool `json:"noTwoWay,omitempty"`
 	// QuitOnClose quits when the window is closed, instead of carrying on in
 	// the menu bar / notification area.
 	QuitOnClose bool `json:"quitOnClose,omitempty"`
