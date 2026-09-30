@@ -50,6 +50,7 @@ type server struct {
 	restarting atomic.Bool
 	quitting   atomic.Bool
 	inWindow   bool // showing its own app window (not a browser tab)
+	started    time.Time
 
 	mu       sync.Mutex
 	scanning *progress
@@ -72,7 +73,8 @@ func Serve(a *app.App, port int, showUI, background bool, version string) error 
 	if port == 0 {
 		port = defaultPort
 	}
-	s := &server{app: a, token: loadToken(), version: version}
+	s := &server{app: a, token: loadToken(), version: version, started: time.Now()}
+	catchCrashes()
 	useWindow := showUI && window.Supported() && os.Getenv("SUPERSYNC_BROWSER") == ""
 
 	// Restarted after an update: take the same port back (the old process is

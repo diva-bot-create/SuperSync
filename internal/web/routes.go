@@ -359,61 +359,28 @@ func (s *server) routes(mux *http.ServeMux) {
 		reply(w, map[string]bool{"ok": true}, nil)
 	})
 	// A plain-text report for tracking down tracks SuperSync can't open.
-	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
-		var b strings.Builder
-		fmt.Fprintf(&b, "SuperSync %s on %s/%s\n", s.version, runtime.GOOS, runtime.GOARCH)
-		if a.Src == nil {
-			fmt.Fprintf(&b, "No library open: %s\n", a.SrcErr)
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Write([]byte(b.String()))
-			return
-		}
-		info := a.Src.Info()
-		fmt.Fprintf(&b, "Library: %s at %s\nDownload folder: %s\n", info.Kind, info.Path, a.Cfg.MusicDir)
-		var total, streams, missing, noAccess, adjusted, cloud int
-		var samples []string
-		for _, t := range a.Src.Tracks() {
-			total++
-			if t.Stream != "" {
-				streams++
-				continue
-			}
-			if t.StoredPath != "" && t.StoredPath != t.Path {
-				adjusted++
-			}
-			if t.Cloud {
-				cloud++
-			}
-			_, err := os.Stat(t.Path)
-			if err == nil {
-				continue
-			}
-			if os.IsPermission(err) {
-				noAccess++
-			} else {
-				missing++
-			}
-			if len(samples) < 8 {
-				dir := filepath.Dir(filepath.FromSlash(t.Path))
-				_, derr := os.Stat(dir)
-				samples = append(samples, fmt.Sprintf("- stored: %q\n  looked at: %q\n  cloud: %v, rekordbox's local copy: %q\n  error: %v\n  folder exists: %v", t.StoredPath, t.Path, t.Cloud, t.CloudLocal, err, derr == nil))
-			}
-		}
-		fmt.Fprintf(&b, "Tracks: %d (%d streaming, %d in Cloud Library Sync, %d can't be found, %d can't be read, %d found elsewhere than stored)\n", total, streams, cloud, missing, noAccess, adjusted)
-		if len(samples) > 0 {
-			b.WriteString("Examples:\n" + strings.Join(samples, "\n") + "\n")
-		}
-		// For a Cloud Library Sync track: what rekordbox records about it.
-		if ci, ok := a.Src.(interface{ CloudInfo(id string) string }); ok {
-			for _, t := range a.Src.Tracks() {
-				if _, err := os.Stat(t.Path); t.Cloud && err != nil {
-					b.WriteString("Cloud track " + t.ID + ":\n" + ci.CloudInfo(t.ID))
-					break
-				}
-			}
-		}
+	mux.HandleFunc("GET /api/report", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte(b.String()))
+		w.Write([]byte(s.report()))
+	})
+	mux.HandleFunc("POST /api/report/issue", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Title string `json:"title"`
+		}
+		decodeOptional(r, &req)
+		if strings.TrimSpace(req.Title) == "" {
+			req.Title = "Problem report"
+		}
+		open(s.issueURL(req.Title))
+		reply(w, map[string]bool{"ok": true}, nil)
+	})
+	mux.HandleFunc("POST /api/crash/dismiss", func(w http.ResponseWriter, r *http.Request) {
+		dismissCrash()
+		reply(w, s.state(), nil)
+	})
+	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte(s.diagnostics()))
 	})
 	mux.HandleFunc("GET /api/missing/find", func(w http.ResponseWriter, r *http.Request) {
 		m, err := a.FindMoved()
@@ -1051,6 +1018,7 @@ type state struct {
 	ListenLeft   int             `json:"listenLeft"` // files not fingerprinted yet
 	Listening    *progress       `json:"listening,omitempty"`
 	Notices      []app.Notice    `json:"notices"`
+	Crash        *CrashInfo      `json:"crash,omitempty"` // SuperSync crashed last time
 	ScannedAt    time.Time       `json:"scannedAt,omitzero"`
 	Scanning     *progress       `json:"scanning,omitempty"`
 	ScanErr      string          `json:"scanErr,omitempty"`
@@ -1107,6 +1075,7 @@ func (s *server) state() state {
 	}
 	st.ListenLeft = a.ListenPending()
 	st.Notices = a.Notices()
+	st.Crash = lastCrash()
 	if lib := a.Lib; lib != nil {
 		st.Tracks, st.ScannedAt = len(lib.Tracks), lib.ScannedAt
 		for _, t := range lib.Tracks {
@@ -1200,3 +1169,59 @@ func (s *server) listen() {
 }
 
 func dirExists(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }
+
+// diagnostics is a short report about the library for troubleshooting.
+func (s *server) diagnostics() string {
+	a := s.app
+	var b strings.Builder
+	fmt.Fprintf(&b, "SuperSync %s on %s/%s\n", s.version, runtime.GOOS, runtime.GOARCH)
+	if a.Src == nil {
+		fmt.Fprintf(&b, "No library open: %s\n", a.SrcErr)
+		return b.String()
+	}
+	info := a.Src.Info()
+	fmt.Fprintf(&b, "Library: %s at %s\nDownload folder: %s\n", info.Kind, info.Path, a.Cfg.MusicDir)
+	var total, streams, missing, noAccess, adjusted, cloud int
+	var samples []string
+	for _, t := range a.Src.Tracks() {
+		total++
+		if t.Stream != "" {
+			streams++
+			continue
+		}
+		if t.StoredPath != "" && t.StoredPath != t.Path {
+			adjusted++
+		}
+		if t.Cloud {
+			cloud++
+		}
+		_, err := os.Stat(t.Path)
+		if err == nil {
+			continue
+		}
+		if os.IsPermission(err) {
+			noAccess++
+		} else {
+			missing++
+		}
+		if len(samples) < 8 {
+			dir := filepath.Dir(filepath.FromSlash(t.Path))
+			_, derr := os.Stat(dir)
+			samples = append(samples, fmt.Sprintf("- stored: %q\n  looked at: %q\n  cloud: %v, rekordbox's local copy: %q\n  error: %v\n  folder exists: %v", t.StoredPath, t.Path, t.Cloud, t.CloudLocal, err, derr == nil))
+		}
+	}
+	fmt.Fprintf(&b, "Tracks: %d (%d streaming, %d in Cloud Library Sync, %d can't be found, %d can't be read, %d found elsewhere than stored)\n", total, streams, cloud, missing, noAccess, adjusted)
+	if len(samples) > 0 {
+		b.WriteString("Examples:\n" + strings.Join(samples, "\n") + "\n")
+	}
+	// For a Cloud Library Sync track: what rekordbox records about it.
+	if ci, ok := a.Src.(interface{ CloudInfo(id string) string }); ok {
+		for _, t := range a.Src.Tracks() {
+			if _, err := os.Stat(t.Path); t.Cloud && err != nil {
+				b.WriteString("Cloud track " + t.ID + ":\n" + ci.CloudInfo(t.ID))
+				break
+			}
+		}
+	}
+	return b.String()
+}

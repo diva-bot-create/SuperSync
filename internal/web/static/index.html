@@ -586,7 +586,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
         <h3>Library</h3>
         <div class="muted" id="srcNote">SuperSync works directly on rekordbox's own library, found automatically.</div>
         <div class="val" id="srcVal">…</div>
-        <div class="row"><button id="diagBtn" title="Copies a short report about your library for troubleshooting (paths of a few tracks SuperSync can't open, and why)">Copy library diagnostics</button><button id="pickDb">Choose rekordbox library…</button><button class="link" id="autoDb">Find automatically</button><button id="addFolder" class="hidden">Add music folder to library</button></div>
+        <div class="row"><button id="reportBtn" title="Something not working? Get a report to send, with what SuperSync knows about the problem">Report a problem…</button><button id="diagBtn" title="Copies a short report about your library for troubleshooting (paths of a few tracks SuperSync can't open, and why)">Copy library diagnostics</button><button id="pickDb">Choose rekordbox library…</button><button class="link" id="autoDb">Find automatically</button><button id="addFolder" class="hidden">Add music folder to library</button></div>
         <ul class="steps" style="margin-top:12px">
           <li>SuperSync reads rekordbox's library directly, so it's always current.</li>
           <li>It only writes (new playlists, downloaded tracks, duplicate clean-ups) while rekordbox is closed, and backs the library up first, keeping the last 10 backups.</li>
@@ -702,6 +702,16 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <div class="warn">If you're playing, cancel: the decks stop. A force-quit skips any rekordbox dialog and loses anything unsaved in it, such as an export in progress. Your library is backed up first either way.</div>
   </div>
   <div class="dlg-f"><button id="quitNo">Keep rekordbox open</button><button class="primary" id="quitYes">Quit rekordbox &amp; continue</button></div>
+</dialog>
+
+<dialog id="reportDlg">
+  <div class="dlg-h" id="repTitle">Report a problem</div>
+  <div class="dlg-b">
+    <p style="margin-top:0" id="repIntro"></p>
+    <textarea id="repText" readonly spellcheck="false" style="width:100%;height:260px;font:11.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical"></textarea>
+    <p class="muted" style="font-size:12px;margin-bottom:0">It includes your SuperSync version, your system, a summary of your library with a few file names, and SuperSync's recent log. Your home folder is shown as ~ and your SoundCloud login is never included. Nothing is sent until you paste it somewhere.</p>
+  </div>
+  <div class="dlg-f"><button class="link hidden" id="repDismiss">Don't show again</button><span class="grow"></span><button id="repClose">Close</button><button id="repCopy">Copy report</button><button class="primary" id="repIssue">Copy &amp; open GitHub issue</button></div>
 </dialog>
 
 <dialog id="histDlg">
@@ -1156,6 +1166,7 @@ async function refresh() {
     if (S.scanErr) toast("Scan failed: " + S.scanErr, "err");
     const v = S.scannedAt + S.tracks + "/" + S.upscaled + "/" + (S.listenLeft === 0); // re-check duplicates once every file has been listened to
     showNotices();
+    checkCrash();
     if (v !== libVersion) { const first = !libVersion; libVersion = v; if (!first) onLibraryChanged(); }
     pollTimer = setTimeout(refresh, S.listening ? 1500 : 3000); // rekordbox open/closed, pending changes
   }
@@ -2312,6 +2323,34 @@ function showNotices() {
     dupesLoaded = upsLoaded = false;
     loadLibrary().then(() => { if (cur.id) openList(cur.id, { quiet: true }); }).catch(() => {});
   }
+}
+
+// ---------- problem reports ----------
+async function showReport(crash) {
+  const d = $("#reportDlg");
+  $("#repTitle").textContent = crash ? "SuperSync quit unexpectedly" : "Report a problem";
+  $("#repIntro").innerHTML = crash
+    ? `SuperSync crashed ${esc(fmtWhen(crash.at))}${crash.summary ? ` (<span class="mono">${esc(crash.summary)}</span>)` : ""}. Sending this report helps get it fixed.`
+    : "Say what went wrong in the GitHub issue, and paste this report under it.";
+  $("#repDismiss").classList.toggle("hidden", !crash);
+  $("#repText").value = "Putting the report together…";
+  openDlg(d);
+  try { const r = await api("report"); $("#repText").value = await r.text(); } catch (e) { $("#repText").value = e.message; }
+  const seen = async () => { if (crash) { await api("crash/dismiss", {}).catch(() => {}); S.crash = null; } };
+  $("#repClose").onclick = () => closeDlg(d);
+  $("#repDismiss").onclick = async () => { await seen(); closeDlg(d); };
+  $("#repCopy").onclick = async () => { await copyText($("#repText").value, "the report"); await seen(); };
+  $("#repIssue").onclick = async () => {
+    await copyText($("#repText").value, "the report (paste it into the issue)");
+    await api("report/issue", { title: crash ? "Crash: " + (crash.summary || "SuperSync quit") : "" }).catch(e => toast(e.message, "err"));
+    await seen();
+    closeDlg(d);
+  };
+}
+$("#reportBtn").onclick = () => showReport(null);
+let crashShown = false;
+function checkCrash() {
+  if (S.crash && !crashShown) { crashShown = true; showReport(S.crash); }
 }
 
 // ---------- history ----------

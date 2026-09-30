@@ -203,6 +203,11 @@ that isn't connected, a file that was moved, or a library shared from another co
 **find them** at the top of the playlist and SuperSync searches your music folder for the moved
 files, or right-click a track and choose **Locate…** to pick the file yourself.
 
+**Something's not working. How do I report it?** Go to **Settings** and click **Report a problem…**.
+SuperSync puts together a report (your version and system, a summary of your library, its recent
+log) and opens a GitHub issue to paste it into. If SuperSync ever crashes, it offers the same report
+the next time you open it. Your SoundCloud login is never included.
+
 **Where are my settings kept?** On your computer only:
 `~/Library/Application Support/SuperSync/` on Mac, `%AppData%\SuperSync\` on Windows.
 
