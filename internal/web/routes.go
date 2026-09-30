@@ -1028,6 +1028,8 @@ type state struct {
 	Tracks       int             `json:"tracks"`
 	Lossless     int             `json:"lossless"`
 	Upscaled     int             `json:"upscaled"`
+	ListenLeft   int             `json:"listenLeft"` // files not fingerprinted yet
+	Listening    *progress       `json:"listening,omitempty"`
 	ScannedAt    time.Time       `json:"scannedAt,omitzero"`
 	Scanning     *progress       `json:"scanning,omitempty"`
 	ScanErr      string          `json:"scanErr,omitempty"`
@@ -1080,6 +1082,7 @@ func (s *server) state() state {
 		info := a.Src.Info()
 		st.Source = &info
 	}
+	st.ListenLeft = a.ListenPending()
 	if lib := a.Lib; lib != nil {
 		st.Tracks, st.ScannedAt = len(lib.Tracks), lib.ScannedAt
 		for _, t := range lib.Tracks {
@@ -1095,6 +1098,10 @@ func (s *server) state() state {
 	if s.scanning != nil {
 		p := *s.scanning
 		st.Scanning = &p
+	}
+	if s.listening != nil {
+		p := *s.listening
+		st.Listening = &p
 	}
 	st.ScanErr = s.scanErr
 	s.mu.Unlock()
@@ -1129,13 +1136,43 @@ func (s *server) startScan() {
 			s.mu.Unlock()
 			err = s.app.CheckQuality(report)
 		}
+
 		s.mu.Lock()
 		s.scanning = nil
 		if err != nil {
 			s.scanErr = err.Error()
 		}
 		s.mu.Unlock()
+		if err == nil {
+			s.listen()
+		}
 	}()
+}
+
+// listen fingerprints new files in the background (see App.Listen), with
+// its own progress so a rescan can still start meanwhile.
+func (s *server) listen() {
+	total := s.app.ListenPending()
+	if total == 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.listening != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.listening = &progress{Phase: "listen", Total: total}
+	s.mu.Unlock()
+	s.app.Listen(func(done, total int) {
+		s.mu.Lock()
+		if s.listening != nil {
+			s.listening.Done, s.listening.Total = done, total
+		}
+		s.mu.Unlock()
+	})
+	s.mu.Lock()
+	s.listening = nil
+	s.mu.Unlock()
 }
 
 func dirExists(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }

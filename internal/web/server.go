@@ -53,11 +53,13 @@ type server struct {
 
 	mu       sync.Mutex
 	scanning *progress
-	scanErr  string
+	// listening: the background fingerprinting pass, if running.
+	listening *progress
+	scanErr   string
 }
 
 type progress struct {
-	Phase string `json:"phase"` // "scan" or "quality"
+	Phase string `json:"phase"` // "scan", "quality" (or "listen" for the fingerprinting pass)
 	Done  int    `json:"done"`
 	Total int    `json:"total"`
 }

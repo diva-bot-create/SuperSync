@@ -1130,12 +1130,17 @@ async function refresh() {
   } else {
     bar.classList.remove("on"); $("i", bar).style.width = "0";
     $("#rescan").disabled = !src;
-    const text = !src ? "No library" : S.tracks ? `${S.tracks.toLocaleString()} files · ${Math.round(S.lossless / S.tracks * 100)}% lossless${S.upscaled ? ` · ${S.upscaled} upscaled` : ""}` : "Not scanned yet";
-    if ($("#libText").textContent !== text) { $("#libText").textContent = text; anim($("#libText"), [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }]); }
+    const L = S.listening;
+    const text = !src ? "No library" : S.tracks ? `${S.tracks.toLocaleString()} files · ${Math.round(S.lossless / S.tracks * 100)}% lossless${S.upscaled ? ` · ${S.upscaled} upscaled` : ""}${L && L.total ? ` · listening for duplicates ${Math.floor(L.done / L.total * 100)}%` : ""}` : "Not scanned yet";
+    const base = text.split(" · listening")[0], shown = $("#libText").textContent;
+    if (shown !== text) {
+      $("#libText").textContent = text;
+      if (shown.split(" · listening")[0] !== base) anim($("#libText"), [{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }]);
+    }
     if (S.scanErr) toast("Scan failed: " + S.scanErr, "err");
-    const v = S.scannedAt + S.tracks + "/" + S.upscaled;
+    const v = S.scannedAt + S.tracks + "/" + S.upscaled + "/" + (S.listenLeft === 0); // re-check duplicates once every file has been listened to
     if (v !== libVersion) { const first = !libVersion; libVersion = v; if (!first) onLibraryChanged(); }
-    pollTimer = setTimeout(refresh, 3000); // rekordbox open/closed, pending changes
+    pollTimer = setTimeout(refresh, S.listening ? 1500 : 3000); // rekordbox open/closed, pending changes
   }
   return S;
 }
@@ -2832,6 +2837,7 @@ function groupHtml(g) {
   const n = extras(g).length;
   return `<h3><span class="gname">${esc(trackName(k))}</span>
       ${g.lengthsDiffer ? `<span class="badge maybe" style="text-transform:none">different lengths</span>` : ""}
+      ${g.bySound ? `<span class="badge" style="text-transform:none" title="These files have different names, but their audio is the same recording">same audio</span>` : ""}
       <span class="grow"></span><button class="link notdup" data-notdup="${g.id}" title="These aren't the same track: stop showing them as duplicates">Not duplicates</button><button class="small" data-move="${g.id}">Clean up</button></h3>
     ${g.copies.map(c => `<label class="copy ${c.path === keep[g.id] ? "" : "drop"}">
       <input type="radio" name="k-${g.id}" value="${esc(c.path)}" ${c.path === keep[g.id] ? "checked" : ""}>

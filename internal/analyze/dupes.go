@@ -36,6 +36,8 @@ type Group struct {
 	// CueWarning is set when a copy that would be moved has rekordbox cue
 	// points and the keeper doesn't.
 	CueWarning bool `json:"cueWarning"`
+	// BySound means some copies were found by their audio, not their names.
+	BySound bool `json:"bySound,omitempty"`
 }
 
 // FindDuplicates groups library tracks that appear to be the same recording.
@@ -63,9 +65,18 @@ func FindDuplicates(lib *library.Library, col rekordbox.Collection) []*Group {
 			if j <= i || find(i) == find(j) {
 				continue
 			}
-			if match.SameFile(t.Keys, h.Track.Keys) >= match.Sure {
+			if match.SameFile(t.Keys, h.Track.Keys) >= match.Sure && !soundsDifferent(t, h.Track) {
 				parent[find(j)] = find(i)
 			}
+		}
+	}
+	// Files that sound the same, whatever they're called.
+	bySound := map[int]bool{}
+	for _, p := range soundPairs(lib) {
+		i, j := p[0], p[1]
+		if find(i) != find(j) {
+			parent[find(j)] = find(i)
+			bySound[i], bySound[j] = true, true
 		}
 	}
 
@@ -81,6 +92,9 @@ func FindDuplicates(lib *library.Library, col rekordbox.Collection) []*Group {
 		}
 		g := &Group{}
 		for _, i := range m {
+			if bySound[i] {
+				g.BySound = true
+			}
 			t := lib.Tracks[i]
 			c := &Copy{Track: t, Upscaled: t.Upscaled(), TrueKbps: t.TrueKbps()}
 			if ct := col.Lookup(t.Path); ct != nil {

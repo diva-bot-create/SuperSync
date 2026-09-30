@@ -133,10 +133,16 @@ download is labelled as what it really is, and shows up under **Upgrades**.
 ### Clean up duplicates
 
 The **Duplicates** tab lists every song you have more than once and picks the best copy to keep.
+SuperSync listens to your files as well as reading their names, so it finds copies with completely
+different names (a `track01.wav` next to the MP3 you bought), marked **same audio**, and won't mix
+up two different songs that happen to share a title. Listening runs in the background after a scan;
+the first time, it takes a few minutes for a big library.
 **Clean up** (or **Clean up all**) then does the following:
 - Your playlists and history switch to the copy you keep, and play counts are added together.
 - Cue points and loops move over from the extra copy, lined up precisely even when the two files
-  start at slightly different times.
+  start at slightly different times. If both copies have cues, you choose: combine both sets (the
+  default; cues in the same place count once, and a hot cue whose letter is taken moves to a free
+  one), keep the kept copy's, or use the other copy's.
 - The extra files go to the Trash (Recycle Bin on Windows). In **Settings → Clean-up** you can choose to delete them permanently instead, or keep them in a `_SuperSync Duplicates` folder.
 
 Copies with different lengths (like a radio edit and an extended mix) are left alone unless you

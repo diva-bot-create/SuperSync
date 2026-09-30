@@ -28,6 +28,10 @@ func (a *App) Background(stop <-chan struct{}) {
 		if time.Since(lastBetter) > 5*time.Minute && a.Lib != nil {
 			lastBetter = time.Now()
 			go a.FindBetterCopies()
+			// New files (from syncs) get fingerprinted too.
+			if a.ListenPending() > 0 {
+				go a.Listen(nil)
+			}
 		}
 
 		if a.Cfg.AutoApply && len(a.PendingChanges()) > 0 && a.Src != nil {

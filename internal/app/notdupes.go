@@ -28,6 +28,10 @@ func pairKey(a, b string) string {
 // tags and names, so two songs that look the same in rekordbox are compared
 // even when their files are tagged or named differently.
 func (a *App) duplicates(lib *library.Library) []*analyze.Group {
+	// Work on a copy: the background listening pass fills in fingerprints.
+	a.mu.Lock()
+	lib = lib.WithExtraKeys(func(*library.Track) []match.Key { return nil })
+	a.mu.Unlock()
 	if a.Src != nil {
 		byPath := map[string]*rbdb.Track{}
 		for _, t := range a.Src.Tracks() {

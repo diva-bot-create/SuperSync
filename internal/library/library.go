@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"supersync/internal/audio"
+	"supersync/internal/fingerprint"
 	"supersync/internal/match"
 )
 
@@ -25,6 +26,10 @@ type Track struct {
 	audio.Info
 	Rel  string      `json:"rel"`
 	Keys []match.Key `json:"-"`
+	// FP is the file's audio fingerprint (filled in by a background pass);
+	// FPFailed means the audio couldn't be read for one.
+	FP       fingerprint.FP `json:"fp,omitempty"`
+	FPFailed bool           `json:"fpFailed,omitempty"`
 }
 
 type Library struct {
