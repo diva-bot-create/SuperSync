@@ -198,6 +198,9 @@ a.sctitle:hover { color: var(--accent); }
 .copy.drop .path { color: var(--muted); }
 .copy.drop .path span { background-size: 100% 1.5px; }
 .gwarn:empty { display: none; }
+.cuechoice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 8px; }
+.cuechoice select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.cuechoice .muted { flex-basis: 100%; }
 
 .settings { display: grid; gap: 18px; }
 .setting { padding: 20px 22px; }
@@ -2629,7 +2632,7 @@ $("#importBtn").onclick = () => {
       <li>Anything that can't be downloaded is listed with its free-download or buy link.</li>
     </ul>
     <input type="text" id="impUrl" placeholder="https://soundcloud.com/you/sets/friday-night" autocomplete="off" spellcheck="false" style="width:100%;font-size:15px;padding:12px 14px">
-    <div class="muted" style="font-size:12.5px;margin-top:8px">YouTube playlist links work too (saved as ~128 kbps audio converted to MP3).</div>
+    <div class="muted" style="font-size:12.5px;margin-top:8px">YouTube playlist links work too (saved as YouTube's own ~128 kbps AAC audio, as .m4a files).</div>
     ${S.source?.running ? `<div class="warn" style="margin-top:10px">rekordbox is open. SuperSync can download now, then add the playlist when you close rekordbox.</div>` : ""}`;
   $("#impFoot").textContent = S.hasToken ? "Using your SoundCloud login for original files." : "";
   $("#impGo").disabled = false;
@@ -2807,7 +2810,21 @@ loaders.dupes = async () => {
   }
 };
 function extras(g) { return g.copies.filter(c => c.path !== keep[g.id]); }
+// When the copy kept and a duplicate both have cues, the user picks whose
+// end up on the kept copy (combining both is the default: nothing is lost).
+const cueMode = {};
+function cueClash(g) {
+  const k = g.copies.find(c => c.path === keep[g.id]);
+  return !!k && k.cues > 0 && extras(g).some(c => c.cues > 0);
+}
+const CUE_MODES = [["both", "Combine both sets"], ["keep", "Keep this copy's cues"], ["other", "Use the other copy's cues"]];
 function warnHtml(g) {
+  if (cueClash(g)) {
+    const m = cueMode[g.id] || "both";
+    return `<div class="cuechoice">Both copies have cues.
+      <select data-cuemode="${g.id}" aria-label="Whose cues to keep">${CUE_MODES.map(([v, l]) => `<option value="${v}" ${v === m ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <span class="muted">${m === "both" ? "Cues in the same place count once; a hot cue whose letter is taken moves to a free one." : m === "other" ? "Lined up to the kept file by its audio." : "The other copy's cues are dropped."}</span></div>`;
+  }
   return needsCues(g) ? `<div class="warn">Your cues are on a copy that isn't the one being kept. Clean-up lines them up and moves them across. <button class="link" data-cues="${g.id}">Preview</button></div>` : "";
 }
 function groupHtml(g) {
@@ -2863,6 +2880,15 @@ function renderDupes() {
 }
 // Picking a different keeper animates in place: strike-throughs sweep across, the warning grows or folds.
 $("#groups").addEventListener("change", e => {
+  if (e.target.dataset.cuemode) {
+    const id = e.target.dataset.cuemode, g = groups.find(x => x.id === id), el = e.target.closest(".group");
+    cueMode[id] = e.target.value;
+    const note = e.target.parentElement.querySelector(".muted"), fresh = document.createElement("div");
+    fresh.innerHTML = warnHtml(g);
+    if (note) note.textContent = fresh.querySelector(".muted")?.textContent || "";
+    if (el) el._html = groupHtml(g);
+    return;
+  }
   if (e.target.type !== "radio") return;
   const el = e.target.closest(".group"), g = groups.find(x => "g" + x.id === el.dataset.k);
   keep[g.id] = e.target.value;
@@ -2978,6 +3004,7 @@ function confirmCleanup(gs) {
   $("#confBody").innerHTML = `<ul class="steps" style="margin-top:0">
       <li>Playlists and history that use an extra copy switch to the kept one. Play counts add up; rating, colour and comment carry over.</li>
       <li>Where the kept copy has no cues, they're copied from the extra, lined up by audio. Different edits are left alone.</li>
+      ${gs.some(cueClash) ? `<li>Where both copies have cues: ${[...new Set(gs.filter(cueClash).map(g => CUE_MODES.find(([v]) => v === (cueMode[g.id] || "both"))[1].toLowerCase()))].join(" / ")}, as chosen on each.</li>` : ""}
       <li>The extras leave your library. ${esc(cleanupWhere())} <button class="link" type="button" onclick="closeDlg($('#confirm')); selectTab('settings')">Change</button></li>
       <li>Your library is backed up first; <b>Undo clean-up</b> puts everything back.</li></ul>
     <ul class="mono" style="padding-left:18px;font-size:12px">${files.map(f => `<li>${esc(f.rel)}</li>`).join("")}</ul>
@@ -2990,7 +3017,7 @@ function confirmCleanup(gs) {
     await closeDlg(d);
     setBusy(+1);
     try {
-      const body = { groups: gs.map(g => ({ keep: keep[g.id], extras: extras(g).map(c => c.path) })) };
+      const body = { groups: gs.map(g => ({ keep: keep[g.id], extras: extras(g).map(c => c.path), cues: cueClash(g) ? cueMode[g.id] || "both" : undefined })) };
       const r = await withRekordbox(`clean up ${gs.length} duplicate${gs.length > 1 ? "s" : ""}`, restart => api("dupes/cleanup", { ...body, restart }));
       if (!r) return;
       const els = gs.map(g => $(`[data-k="g${g.id}"]`)).filter(Boolean);

@@ -15,6 +15,7 @@ import (
 	"supersync/internal/audio"
 	"supersync/internal/library"
 	"supersync/internal/match"
+	"supersync/internal/rbdb"
 )
 
 // BetterCopy is a better-quality file of a library track that isn't in the
@@ -194,7 +195,7 @@ func (a *App) SwapUpgrade(id, path string) (*CleanupResult, error) {
 		before = applied.Backup
 		a.rebuild()
 	}
-	res, err := a.CleanupDuplicates([]CleanupGroup{{Keep: path, Extras: []string{old.Path}}})
+	res, err := a.CleanupDuplicates([]CleanupGroup{{Keep: path, Extras: []string{old.Path}, Cues: rbdb.CuesBoth}})
 	if err == nil {
 		// Undo goes back to before the swap: the new file out of the library
 		// (and back where it came from), the old one back in its place.

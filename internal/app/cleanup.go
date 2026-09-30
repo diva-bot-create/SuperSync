@@ -17,6 +17,10 @@ import (
 type CleanupGroup struct {
 	Keep   string   `json:"keep"`
 	Extras []string `json:"extras"`
+	// Cues: when the copy kept and a duplicate both have cues, whose to end
+	// up with (keep, other or both). Otherwise cues move over only when the
+	// kept copy has none.
+	Cues rbdb.CueMode `json:"cues,omitempty"`
 }
 
 // CleanupResult reports what a clean-up did, per group.
@@ -50,7 +54,8 @@ type LastCleanup struct {
 // CleanupDuplicates folds each group's extras into its keeper, in the library
 // and on disk: playlists and history switch to the keeper, play counts add up,
 // cues move over (lined up by audio) when the keeper has none, the extras
-// leave the collection, and their files move to the duplicates folder.
+// leave the collection, and their files move to the duplicates folder. When
+// both have cues, the group's Cues says whose to keep.
 func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 	if a.Src == nil {
 		return nil, ErrNoSource
@@ -78,7 +83,7 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 			}
 		}
 		var shift *float64
-		if keep.Cues == 0 && src != "" {
+		if src != "" && (keep.Cues == 0 || g.Cues == rbdb.CuesOther || g.Cues == rbdb.CuesBoth) {
 			plans, err := a.PlanCues([]analyze.Pair{{From: src, To: g.Keep}})
 			switch {
 			case err != nil:
@@ -105,7 +110,7 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 			}
 			op := MergeOp{Keep: keep.ID, Extra: ct.ID}
 			if x == src {
-				op.CueShift = shift
+				op.CueShift, op.Cues = shift, g.Cues
 			}
 			ops = append(ops, op)
 			rep.Merged++

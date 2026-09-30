@@ -95,6 +95,8 @@ What gets downloaded:
   worth replacing.
 - Songs that can't be downloaded at all are listed with a link to the artist's free-download or
   buy page.
+- From YouTube: the video's own audio (about 128 kbps AAC), saved untouched as an `.m4a` file,
+  which rekordbox and Pioneer players read.
 
 If a song can't be downloaded (some SoundCloud tracks are only streamed copy-protected), click
 **Use another link…** next to it. Paste a link to the same song elsewhere: another SoundCloud

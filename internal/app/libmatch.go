@@ -173,7 +173,7 @@ func (a *App) foldSame(xID, yID string) (string, error) {
 	if rekordbox.NormPath(keep.Path) == rekordbox.NormPath(extra.Path) {
 		return keep.ID, nil // two entries for one file: nothing to clean up on disk
 	}
-	if _, err := a.CleanupDuplicates([]CleanupGroup{{Keep: keep.Path, Extras: []string{extra.Path}}}); err != nil {
+	if _, err := a.CleanupDuplicates([]CleanupGroup{{Keep: keep.Path, Extras: []string{extra.Path}, Cues: rbdb.CuesBoth}}); err != nil {
 		return "", err
 	}
 	return keep.ID, nil

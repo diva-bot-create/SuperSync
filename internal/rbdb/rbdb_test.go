@@ -2,6 +2,7 @@ package rbdb
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,7 +184,7 @@ func TestMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	shift := -0.825
-	if err := tx.Merge(keep, extra, &shift); err != nil {
+	if err := tx.Merge(keep, extra, &shift, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Commit(t.TempDir()); err != nil {
@@ -372,5 +373,62 @@ func TestLocalPath(t *testing.T) {
 	}
 	if got := localPath("/nowhere/at/all.mp3"); got != "/nowhere/at/all.mp3" {
 		t.Fatalf("unknown path changed: %q", got)
+	}
+}
+
+// When both copies have cues: keep's, the other's, or both combined.
+func TestMergeCueModes(t *testing.T) {
+	for _, mode := range []CueMode{CuesKeep, CuesOther, CuesBoth} {
+		t.Run(string(mode), func(t *testing.T) {
+			loc := library(t)
+			music := t.TempDir()
+			a, b := filepath.Join(music, "a.mp3"), filepath.Join(music, "b.wav")
+			os.WriteFile(a, []byte("x"), 0o644)
+			os.WriteFile(b, []byte("x"), 0o644)
+			tx, err := Begin(loc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			extra, _ := tx.AddTrack(NewTrack{Path: a, Title: "Tune"})
+			keep, _ := tx.AddTrack(NewTrack{Path: b, Title: "Tune"})
+			add := func(id string, kind, in int, comment string) {
+				c := map[string]any{"ID": uuidLike(), "ContentID": id, "UUID": uuidLike(), "Kind": kind, "InMsec": in, "OutMsec": -1,
+					"Comment": comment, "created_at": tx.now, "updated_at": tx.now}
+				if err := tx.insert("djmdCue", c); err != nil {
+					t.Fatal(err)
+				}
+			}
+			add(keep, 1, 1000, "keep A")
+			add(keep, 2, 20000, "keep B")
+			add(extra, 1, 1500, "extra A, same as keep A") // lands on 1000 after the shift
+			add(extra, 2, 40500, "extra B")                // B is taken: moves to C
+			add(extra, 0, 60500, "extra memory")
+			if _, err := tx.Commit(t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			tx, _ = Begin(loc)
+			shift := -0.5
+			if err := tx.Merge(keep, extra, &shift, mode); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Commit(t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			db, _ := Open(loc)
+			defer db.Close()
+			cues, _ := db.Cues(keep)
+			var got []string
+			for _, c := range cues {
+				got = append(got, fmt.Sprintf("%d@%d %s", c.Hot, c.InMs, c.Comment))
+			}
+			want := map[CueMode][]string{
+				CuesKeep:  {"1@1000 keep A", "2@20000 keep B"},
+				CuesOther: {"1@1000 extra A, same as keep A", "2@40000 extra B", "0@60000 extra memory"},
+				CuesBoth:  {"1@1000 keep A", "2@20000 keep B", "3@40000 extra B", "0@60000 extra memory"},
+			}[mode]
+			if strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("got %v\nwant %v", got, want)
+			}
+		})
 	}
 }

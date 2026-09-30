@@ -315,25 +315,25 @@ func (c *Client) player(id string) (*playerInfo, error) {
 	return p, nil
 }
 
-// Download saves e into dir as "<title>.mp3", tagged with title and artist,
-// and returns the path. A file already there is kept, so re-running a
-// playlist only fetches what's new. progress may be nil.
+// Download saves e into dir as "<title>.m4a", tagged with title and artist,
+// and returns the path. YouTube's AAC audio is copied into the file as it is
+// (re-encoding it to mp3 would only lose quality); rekordbox plays .m4a. A
+// file already there (or an .mp3 from an older version) is kept, so re-running
+// a playlist only fetches what's new. progress may be nil.
 func (c *Client) Download(e *Entry, dir string, progress func(done, total int64)) (string, error) {
-	if e.Title != "" {
-		if path := filepath.Join(dir, safeName(e.Title)+".mp3"); exists(path) {
-			return path, nil
-		}
+	if p := Existing(e, dir); p != "" {
+		return p, nil
 	}
 	p, err := c.player(e.ID)
 	if err != nil {
 		return "", err
 	}
 	// The file keeps the video's name; the tags get a clean artist and title.
-	path := filepath.Join(dir, safeName(p.entry.Title)+".mp3")
-	artist, title := match.ArtistTitle(p.entry.Title, p.entry.Artist())
-	if exists(path) {
-		return path, nil
+	if old := Existing(p.entry, dir); old != "" {
+		return old, nil
 	}
+	path := filepath.Join(dir, safeName(p.entry.Title)+".m4a")
+	artist, title := match.ArtistTitle(p.entry.Title, p.entry.Artist())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -341,16 +341,9 @@ func (c *Client) Download(e *Entry, dir string, progress func(done, total int64)
 	if err != nil {
 		return "", err
 	}
-	t, err := demux(raw)
-	if err == nil && t == nil {
-		err = errors.New("unexpected file layout")
-	}
+	out, err := Remux(raw, title, artist)
 	if err != nil {
 		return "", fmt.Errorf("couldn't read YouTube's audio file: %w", err)
-	}
-	out, err := t.mp3(title, artist)
-	if err != nil {
-		return "", fmt.Errorf("couldn't convert to mp3: %w", err)
 	}
 	tmp := path + ".part"
 	if err := os.WriteFile(tmp, out, 0o644); err != nil {
@@ -362,8 +355,13 @@ func (c *Client) Download(e *Entry, dir string, progress func(done, total int64)
 
 // Existing is the file an earlier Download saved for e in dir, or "".
 func Existing(e *Entry, dir string) string {
-	if p := filepath.Join(dir, safeName(e.Title)+".mp3"); e.Title != "" && exists(p) {
-		return p
+	if e.Title == "" {
+		return ""
+	}
+	for _, ext := range []string{".m4a", ".mp3"} {
+		if p := filepath.Join(dir, safeName(e.Title)+ext); exists(p) {
+			return p
+		}
 	}
 	return ""
 }

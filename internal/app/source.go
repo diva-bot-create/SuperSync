@@ -100,6 +100,7 @@ type ChangeItem struct {
 type MergeOp struct {
 	Keep, Extra string
 	CueShift    *float64
+	Cues        rbdb.CueMode // when both have cues: whose to end up with
 }
 
 type Applied struct {
@@ -329,7 +330,7 @@ func (s *rbSource) Merge(ops []MergeOp) (string, error) {
 		return "", err
 	}
 	for _, op := range ops {
-		if err := tx.Merge(op.Keep, op.Extra, op.CueShift); err != nil {
+		if err := tx.Merge(op.Keep, op.Extra, op.CueShift, op.Cues); err != nil {
 			tx.Rollback()
 			return "", err
 		}
@@ -785,7 +786,21 @@ func (s *xmlSource) Merge(ops []MergeOp) (string, error) {
 			}
 		}
 		walk(lib.Root)
-		if op.CueShift != nil && len(keep.Marks) == 0 {
+		if op.CueShift != nil && (len(keep.Marks) == 0 || op.Cues == rbdb.CuesOther || op.Cues == rbdb.CuesBoth) {
+			combine := len(keep.Marks) > 0 && op.Cues == rbdb.CuesBoth
+			if !combine {
+				keep.Marks = nil
+			}
+			usedNum := map[string]bool{}
+			var mine []float64
+			for _, m := range keep.Marks {
+				if n := m.Get("Num"); n != "" && n != "-1" {
+					usedNum[n] = true
+				}
+				if v, err := strconv.ParseFloat(m.Get("Start"), 64); err == nil {
+					mine = append(mine, v)
+				}
+			}
 			for _, m := range extra.Marks {
 				attrs := append(m.Attrs[:0:0], m.Attrs...)
 				ok := true
@@ -796,6 +811,27 @@ func (s *xmlSource) Merge(ops []MergeOp) (string, error) {
 							ok = false
 						}
 						attrs = rekordbox.SetAttr(attrs, k, strconv.FormatFloat(math.Max(0, v), 'f', 3, 64))
+					}
+				}
+				if ok && combine {
+					start, _ := strconv.ParseFloat(rekordbox.Elem{Attrs: attrs}.Get("Start"), 64)
+					for _, v := range mine {
+						if math.Abs(v-start) <= 0.05 {
+							ok = false // the same cue as one of keep's
+						}
+					}
+					if n := (rekordbox.Elem{Attrs: attrs}).Get("Num"); ok && n != "" && n != "-1" && usedNum[n] {
+						free := "-1"
+						for i := 0; i < 8; i++ {
+							if c := strconv.Itoa(i); !usedNum[c] {
+								free = c
+								break
+							}
+						}
+						attrs = rekordbox.SetAttr(attrs, "Num", free)
+					}
+					if n := (rekordbox.Elem{Attrs: attrs}).Get("Num"); n != "" && n != "-1" {
+						usedNum[n] = true
 					}
 				}
 				if ok {

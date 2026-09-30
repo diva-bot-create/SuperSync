@@ -17,10 +17,12 @@ import (
 // in a playlist); play counts add up; rating, colour and comment carry over
 // where keep has none; and extra is removed from the collection.
 //
-// If cueShift is non-nil and keep has no cues of its own, extra's hot cues,
-// memory cues and loops are copied onto keep, moved by cueShift seconds (the
-// measured offset between the two files).
-func (t *Tx) Merge(keep, extra string, cueShift *float64) error {
+// If cueShift is non-nil, extra's hot cues, memory cues and loops are copied
+// onto keep, moved by cueShift seconds (the measured offset between the two
+// files). What happens when keep has cues of its own too is up to cues:
+// CuesKeep (or "") leaves keep's alone, CuesOther replaces them with extra's,
+// CuesBoth adds extra's to them.
+func (t *Tx) Merge(keep, extra string, cueShift *float64, cues CueMode) error {
 	if keep == extra {
 		return errors.New("can't merge a track into itself")
 	}
@@ -59,8 +61,22 @@ func (t *Tx) Merge(keep, extra string, cueShift *float64) error {
 	if cueShift != nil {
 		var have int
 		t.tx.QueryRow(`SELECT COUNT(*) FROM djmdCue WHERE ContentID = ? AND IFNULL(rb_local_deleted,0)=0`, keep).Scan(&have)
-		if have == 0 {
-			if err := t.copyCues(keep, keepUUID, extra, *cueShift); err != nil {
+		switch {
+		case have == 0:
+			if err := t.copyCues(keep, keepUUID, extra, *cueShift, false); err != nil {
+				return err
+			}
+		case cues == CuesOther:
+			for _, tbl := range []string{"djmdCue", "contentCue"} {
+				if _, err := t.tx.Exec(`DELETE FROM "`+tbl+`" WHERE ContentID = ?`, keep); err != nil {
+					return fmt.Errorf("%s: %w", tbl, err)
+				}
+			}
+			if err := t.copyCues(keep, keepUUID, extra, *cueShift, false); err != nil {
+				return err
+			}
+		case cues == CuesBoth:
+			if err := t.copyCues(keep, keepUUID, extra, *cueShift, true); err != nil {
 				return err
 			}
 		}
@@ -134,10 +150,31 @@ func (t *Tx) movePlaylistEntries(keep, extra string) error {
 	return nil
 }
 
+// CueMode says whose cues a merged track ends up with when both copies have
+// some.
+type CueMode string
+
+const (
+	CuesKeep  CueMode = "keep"  // the kept copy's (the default)
+	CuesOther CueMode = "other" // the duplicate's, lined up to the kept file
+	CuesBoth  CueMode = "both"  // both sets together
+)
+
+// cueKey identifies a cue for combining two sets.
+type cueKey struct {
+	kind int64
+	in   int64
+}
+
 // copyCues duplicates extra's cue rows onto keep, shifted in time. Every
 // column is copied (names, colours, loop lengths...); positions that are
 // specific to the old file's MP3 framing are cleared for rekordbox to redo.
-func (t *Tx) copyCues(keep, keepUUID, extra string, shift float64) error {
+//
+// With combine, keep's own cues stay: a cue of extra's that lands within
+// 50 ms of one of keep's of the same sort is left out as the same cue, and a
+// hot cue whose letter keep already uses moves to a free letter, or becomes
+// a memory cue when all eight are taken.
+func (t *Tx) copyCues(keep, keepUUID, extra string, shift float64, combine bool) error {
 	rows, err := t.tx.Query(`SELECT * FROM djmdCue WHERE ContentID = ? AND IFNULL(rb_local_deleted,0)=0`, extra)
 	if err != nil {
 		return err
@@ -161,6 +198,26 @@ func (t *Tx) copyCues(keep, keepUUID, extra string, shift float64) error {
 		all = append(all, m)
 	}
 	rows.Close()
+
+	var mine []cueKey
+	used := map[int64]bool{}
+	if combine {
+		r, err := t.tx.Query(`SELECT IFNULL(Kind,0), IFNULL(InMsec,0) FROM djmdCue WHERE ContentID = ? AND IFNULL(rb_local_deleted,0)=0`, keep)
+		if err != nil {
+			return err
+		}
+		for r.Next() {
+			var k cueKey
+			r.Scan(&k.kind, &k.in)
+			mine = append(mine, k)
+			used[k.kind] = true
+		}
+		r.Close()
+	}
+	letters := hotCueKinds(mine, all)
+	// added maps extra's cues (kind and position once shifted) to the kind
+	// each got on keep, for the JSON copy below.
+	added := map[cueKey]int64{}
 	for _, m := range all {
 		in := asInt(m["InMsec"]) + int64(math.Round(shift*1000))
 		if in < 0 {
@@ -169,6 +226,33 @@ func (t *Tx) copyCues(keep, keepUUID, extra string, shift float64) error {
 			}
 			in = 0
 		}
+		orig := asInt(m["Kind"])
+		kind := orig
+		if combine {
+			same := false
+			for _, k := range mine {
+				if (k.kind == 0) == (kind == 0) && abs64(k.in-in) <= 50 {
+					same = true
+				}
+			}
+			if same {
+				continue
+			}
+			if kind != 0 && used[kind] {
+				kind = 0 // memory cue, unless a letter is free
+				for _, l := range letters {
+					if !used[l] {
+						kind = l
+						break
+					}
+				}
+			}
+			if kind != 0 {
+				used[kind] = true
+			}
+			m["Kind"] = kind
+		}
+		added[cueKey{orig, in}] = kind
 		id, err := t.newID("djmdCue", "ID")
 		if err != nil {
 			return err
@@ -203,6 +287,12 @@ func (t *Tx) copyCues(keep, keepUUID, extra string, shift float64) error {
 	var cid string
 	var js sql.NullString
 	err = t.tx.QueryRow(`SELECT ID, Cues FROM contentCue WHERE ContentID = ? LIMIT 1`, extra).Scan(&cid, &js)
+	if combine {
+		if err == nil && js.Valid && js.String != "" {
+			return t.combineCueJSON(keep, keepUUID, js.String, shift, added)
+		}
+		return nil
+	}
 	if err == nil && js.Valid && js.String != "" {
 		shifted, err := shiftCueJSON(js.String, shift, keep, keepUUID)
 		if err == nil {
@@ -215,6 +305,68 @@ func (t *Tx) copyCues(keep, keepUUID, extra string, shift float64) error {
 		}
 	}
 	return nil
+}
+
+// hotCueKinds is the Kind numbers for hot cues A-H. Libraries use either
+// 1-8 or 1,2,3,5,…,9 (skipping 4); whichever these cues use.
+func hotCueKinds(mine []cueKey, theirs []map[string]any) []int64 {
+	seen := map[int64]bool{}
+	for _, k := range mine {
+		seen[k.kind] = true
+	}
+	for _, m := range theirs {
+		seen[asInt(m["Kind"])] = true
+	}
+	if seen[9] || (seen[5] && !seen[4]) {
+		return []int64{1, 2, 3, 5, 6, 7, 8, 9}
+	}
+	return []int64{1, 2, 3, 4, 5, 6, 7, 8}
+}
+
+func abs64(n int64) int64 {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// combineCueJSON adds the cues copied from extra to keep's JSON copy of its
+// cues (newer rekordbox versions), when both copies have one and it's a
+// list. Otherwise keep's JSON is left as it is.
+func (t *Tx) combineCueJSON(keep, keepUUID, extraJSON string, shift float64, added map[cueKey]int64) error {
+	var id string
+	var mine sql.NullString
+	if t.tx.QueryRow(`SELECT ID, Cues FROM contentCue WHERE ContentID = ? LIMIT 1`, keep).Scan(&id, &mine) != nil || !mine.Valid {
+		return nil
+	}
+	shifted, err := shiftCueJSON(extraJSON, shift, keep, keepUUID)
+	if err != nil {
+		return nil
+	}
+	var ours, theirs []map[string]any
+	if json.Unmarshal([]byte(mine.String), &ours) != nil || json.Unmarshal([]byte(shifted), &theirs) != nil {
+		return nil
+	}
+	for _, c := range theirs {
+		k, isNum := c["Kind"].(float64)
+		in, isNum2 := c["InMsec"].(float64)
+		if !isNum || !isNum2 {
+			continue
+		}
+		kind, ok := added[cueKey{int64(k), int64(in)}]
+		if !ok {
+			continue // the same as one of keep's, or before the start
+		}
+		c["Kind"] = kind
+		ours = append(ours, c)
+	}
+	b, err := json.Marshal(ours)
+	if err != nil {
+		return err
+	}
+	_, err = t.tx.Exec(`UPDATE contentCue SET Cues = ?, rb_cue_count = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?`,
+		string(b), len(ours), t.nextUSN(), t.now, id)
+	return err
 }
 
 // shiftCueJSON moves the time fields in contentCue's JSON the same way.
