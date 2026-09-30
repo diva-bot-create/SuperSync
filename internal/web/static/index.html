@@ -2930,6 +2930,14 @@ loaders.dupes = async () => {
   }
 };
 function extras(g) { return g.copies.filter(c => c.path !== keep[g.id]); }
+// A group's title: the kept copy's name, unless it's a bare file name like
+// "track01" and another copy has a proper "Artist – Title" (copies found by
+// their sound can be named anything).
+function groupName(g) {
+  const k = g.copies.find(c => c.path === keep[g.id]) || g.copies[0];
+  const named = c => (c.artist && c.title) || / [–-] /.test(trackName(c));
+  return trackName(named(k) ? k : g.copies.find(named) || k);
+}
 // When the copy kept and a duplicate both have cues, the user picks whose
 // end up on the kept copy (combining both is the default: nothing is lost).
 const cueMode = {};
@@ -2948,9 +2956,8 @@ function warnHtml(g) {
   return needsCues(g) ? `<div class="warn">Your cues are on a copy that isn't the one being kept. Clean-up lines them up and moves them across. <button class="link" data-cues="${g.id}">Preview</button></div>` : "";
 }
 function groupHtml(g) {
-  const k = g.copies.find(c => c.path === keep[g.id]);
   const n = extras(g).length;
-  return `<h3><span class="gname">${esc(trackName(k))}</span>
+  return `<h3><span class="gname">${esc(groupName(g))}</span>
       ${g.lengthsDiffer ? `<span class="badge maybe" style="text-transform:none">different lengths</span>` : ""}
       ${g.bySound ? `<span class="badge" style="text-transform:none" title="These files have different names, but their audio is the same recording">same audio</span>` : ""}
       <span class="grow"></span><button class="link notdup" data-notdup="${g.id}" title="These aren't the same track: stop showing them as duplicates">Not duplicates</button><button class="small" data-move="${g.id}">Clean up</button></h3>
@@ -3014,9 +3021,8 @@ $("#groups").addEventListener("change", e => {
   const el = e.target.closest(".group"), g = groups.find(x => "g" + x.id === el.dataset.k);
   keep[g.id] = e.target.value;
   $$(".copy", el).forEach(l => l.classList.toggle("drop", $("input", l).value !== keep[g.id]));
-  const k = g.copies.find(c => c.path === keep[g.id]);
   const name = $(".gname", el);
-  if (name.textContent !== trackName(k)) { name.textContent = trackName(k); anim(name, [{ opacity: 0 }, { opacity: 1 }]); }
+  if (name.textContent !== groupName(g)) { name.textContent = groupName(g); anim(name, [{ opacity: 0 }, { opacity: 1 }]); }
 
   const w = $(".gwarn", el), html = warnHtml(g);
   if (w.innerHTML !== html) smoothHeight(el, () => { w.innerHTML = html; }).then(() => html && anim(w, [{ opacity: 0 }, { opacity: 1 }]));
