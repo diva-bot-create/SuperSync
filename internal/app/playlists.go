@@ -18,7 +18,7 @@ func (a *App) EditPlaylists(e PlaylistEdit) (*PlaylistEditResult, error) {
 	if (e.Op == "create" || e.Op == "rename") && e.Name == "" {
 		return nil, errors.New("give it a name")
 	}
-	res, err := a.Src.EditPlaylists(e)
+	res, err := a.editPlaylists(e, "")
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +98,7 @@ func (a *App) RestoreBackup(backup string) error {
 	if err := a.Src.Restore(backup); err != nil {
 		return err
 	}
+	dropHistoryFrom(backup)
 	a.rebuild()
 	return nil
 }

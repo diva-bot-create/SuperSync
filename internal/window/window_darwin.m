@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <UserNotifications/UserNotifications.h>
 
 extern void ssWillTerminate(void);
 extern void ssMenuAction(int action);
@@ -306,6 +307,60 @@ void ssEdit(const char *sel) {
   NSString *s = [NSString stringWithUTF8String:sel];
   dispatch_async(dispatch_get_main_queue(), ^{
     [NSApp sendAction:NSSelectorFromString(s) to:nil from:nil];
+  });
+}
+
+// ssActive: is the window on screen and SuperSync the app in front?
+int ssActive(void) {
+  __block int r = 0;
+  void (^check)(void) = ^{
+    r = [NSApp isActive] && gDelegate.window.isVisible && !gDelegate.window.isMiniaturized;
+  };
+  if ([NSThread isMainThread]) check(); else dispatch_sync(dispatch_get_main_queue(), check);
+  return r;
+}
+
+// Clicking a notification brings the window back.
+@interface SSNotifyDelegate : NSObject <UNUserNotificationCenterDelegate>
+@end
+@implementation SSNotifyDelegate
+- (void)userNotificationCenter:(UNUserNotificationCenter *)c didReceiveNotificationResponse:(UNNotificationResponse *)r
+         withCompletionHandler:(void (^)(void))done {
+  [gDelegate showWindow:nil];
+  done();
+}
+@end
+static SSNotifyDelegate *gNotify;
+
+// AppleScript's notification: works without permission, for a copy of
+// SuperSync macOS won't let post its own (not in an app bundle, or refused).
+static void scriptNotify(NSString *t, NSString *b) {
+  NSString *(^q)(NSString *) = ^(NSString *s) {
+    return [[s stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"] stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+  };
+  NSTask *task = [NSTask new];
+  task.launchPath = @"/usr/bin/osascript";
+  task.arguments = @[@"-e", [NSString stringWithFormat:@"display notification \"%@\" with title \"%@\"", q(b), q(t)]];
+  @try { [task launch]; } @catch (NSException *e) {}
+}
+
+void ssNotify(const char *title, const char *body) {
+  NSString *t = [NSString stringWithUTF8String:title], *b = [NSString stringWithUTF8String:body];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (NSBundle.mainBundle.bundleIdentifier == nil) { scriptNotify(t, b); return; }
+    UNUserNotificationCenter *c = [UNUserNotificationCenter currentNotificationCenter];
+    if (!gNotify) { gNotify = [SSNotifyDelegate new]; c.delegate = gNotify; }
+    [c requestAuthorizationWithOptions:UNAuthorizationOptionAlert completionHandler:^(BOOL granted, NSError *err) {
+      if (!granted) {
+        if (err) dispatch_async(dispatch_get_main_queue(), ^{ scriptNotify(t, b); }); // not allowed to ask: fall back
+        return; // the user said no: respect it
+      }
+      UNMutableNotificationContent *n = [UNMutableNotificationContent new];
+      n.title = t;
+      n.body = b;
+      UNNotificationRequest *req = [UNNotificationRequest requestWithIdentifier:[[NSUUID UUID] UUIDString] content:n trigger:nil];
+      [c addNotificationRequest:req withCompletionHandler:nil];
+    }];
   });
 }
 

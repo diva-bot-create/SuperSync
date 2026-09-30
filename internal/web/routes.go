@@ -45,6 +45,7 @@ func (s *server) routes(mux *http.ServeMux) {
 			OpenAtLogin *bool   `json:"openAtLogin"`
 			Cleanup     *string `json:"cleanupAction"`
 			MirrorRemov *bool   `json:"mirrorRemovals"`
+			AutoSwap    *bool   `json:"autoSwap"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -78,6 +79,10 @@ func (s *server) routes(mux *http.ServeMux) {
 		if err == nil && req.KeepRunning != nil {
 			a.Cfg.QuitOnClose = !*req.KeepRunning
 			window.SetKeepRunning(*req.KeepRunning)
+			err = a.Cfg.Save()
+		}
+		if err == nil && req.AutoSwap != nil {
+			a.Cfg.NoAutoSwap = !*req.AutoSwap
 			err = a.Cfg.Save()
 		}
 		if err == nil && req.MirrorRemov != nil {
@@ -537,6 +542,21 @@ func (s *server) routes(mux *http.ServeMux) {
 		decodeOptional(r, &req)
 		var note string
 		err := a.WithRekordboxClosed(req.Restart, func() (err error) { note, err = a.UndoCleanupNote(); return })
+		reply(w, map[string]any{"ok": true, "note": note}, err)
+	})
+	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, a.History(), nil)
+	})
+	mux.HandleFunc("POST /api/history/undo", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID      string `json:"id"`
+			Restart bool   `json:"restart"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		var note string
+		err := a.WithRekordboxClosed(req.Restart, func() (err error) { note, err = a.UndoTo(req.ID); return })
 		reply(w, map[string]any{"ok": true, "note": note}, err)
 	})
 	mux.HandleFunc("POST /api/pending/discard", func(w http.ResponseWriter, r *http.Request) {
@@ -1030,6 +1050,7 @@ type state struct {
 	Upscaled     int             `json:"upscaled"`
 	ListenLeft   int             `json:"listenLeft"` // files not fingerprinted yet
 	Listening    *progress       `json:"listening,omitempty"`
+	Notices      []app.Notice    `json:"notices"`
 	ScannedAt    time.Time       `json:"scannedAt,omitzero"`
 	Scanning     *progress       `json:"scanning,omitempty"`
 	ScanErr      string          `json:"scanErr,omitempty"`
@@ -1046,6 +1067,7 @@ type state struct {
 	DownloadsDir string          `json:"downloadsDir,omitempty"` // the user's Downloads folder, where new files usually land
 	Cleanup      string          `json:"cleanupAction"`          // trash, delete or folder
 	MirrorRemov  bool            `json:"mirrorRemovals"`         // songs taken off a synced playlist leave it here too
+	AutoSwap     bool            `json:"autoSwap"`               // swap in better copies of cue-less tracks by itself
 	KeepRunning  bool            `json:"keepRunning"`
 	OpenAtLogin  bool            `json:"openAtLogin"`
 	CanAutorun   bool            `json:"canAutorun"`
@@ -1070,6 +1092,7 @@ func (s *server) state() state {
 	st.Update, st.AutoUpdate, st.App = s.upd.Status(), !a.Cfg.NoAutoUpdate, s.inWindow
 	st.KeepRunning, st.OpenAtLogin, st.CanAutorun = !a.Cfg.QuitOnClose, a.Cfg.OpenAtLogin, autostart.Supported()
 	st.MirrorRemov = !a.Cfg.KeepRemovedTracks
+	st.AutoSwap = !a.Cfg.NoAutoSwap
 	if st.Cleanup = a.Cfg.CleanupAction; st.Cleanup == "" {
 		st.Cleanup = "trash"
 	}
@@ -1083,6 +1106,7 @@ func (s *server) state() state {
 		st.Source = &info
 	}
 	st.ListenLeft = a.ListenPending()
+	st.Notices = a.Notices()
 	if lib := a.Lib; lib != nil {
 		st.Tracks, st.ScannedAt = len(lib.Tracks), lib.ScannedAt
 		for _, t := range lib.Tracks {

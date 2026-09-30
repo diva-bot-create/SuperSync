@@ -183,7 +183,7 @@ func (a *App) ResolveMaybe(playlistURL string, scID int64, same bool) (*LinkResu
 		pid := sp.PlaylistID
 		a.State.mu.Unlock()
 		if wrong != "" && pid != "" {
-			if _, err := a.Src.EditPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: []string{wrong}}); err != nil {
+			if _, err := a.editPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: []string{wrong}}, "Took a wrong match off “"+sp.Title+"”"); err != nil {
 				return nil, err
 			}
 			a.rebuild()

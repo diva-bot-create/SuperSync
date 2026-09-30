@@ -38,6 +38,9 @@ type Config struct {
 	AutoApply bool `json:"autoApply"`
 	// NoAutoUpdate turns off downloading new versions from GitHub in the background.
 	NoAutoUpdate bool `json:"noAutoUpdate,omitempty"`
+	// NoAutoSwap turns off swapping in better copies of tracks without cues
+	// by itself.
+	NoAutoSwap bool `json:"noAutoSwap,omitempty"`
 	// QuitOnClose quits when the window is closed, instead of carrying on in
 	// the menu bar / notification area.
 	QuitOnClose bool `json:"quitOnClose,omitempty"`
@@ -323,9 +326,12 @@ func (a *App) AddFolder(progress library.Progress) (int, error) {
 	if len(ch.Items) == 0 {
 		return 0, nil
 	}
-	if _, err := a.Src.Apply(ch); err != nil {
+	before := a.syncSnapshot()
+	res, err := a.Src.Apply(ch)
+	if err != nil {
 		return 0, err
 	}
+	a.record(fmt.Sprintf("Added %d file%s from the music folder", len(ch.Items), plural(len(ch.Items))), res.Backup, before, nil, false)
 	a.rebuild()
 	return len(ch.Items), a.Scan(nil)
 }

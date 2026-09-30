@@ -4,13 +4,15 @@ package window
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc -mmacosx-version-min=11.0
-#cgo LDFLAGS: -framework Cocoa -framework WebKit -mmacosx-version-min=11.0
+#cgo LDFLAGS: -framework Cocoa -framework WebKit -framework UserNotifications -mmacosx-version-min=11.0
 #include <stdlib.h>
 void ssRun(const char *url, const char *title, int w, int h, int hidden);
 void ssSetKeepRunning(int keep);
 void ssFocus(void);
 void ssClose(void);
 void ssEdit(const char *sel);
+int ssActive(void);
+void ssNotify(const char *title, const char *body);
 */
 import "C"
 
@@ -82,6 +84,17 @@ func Edit(action string) {
 	c := C.CString(sel)
 	defer C.free(unsafe.Pointer(c))
 	C.ssEdit(c)
+}
+
+// Active reports whether the window is on screen and in front.
+func Active() bool { return C.ssActive() != 0 }
+
+// Notify shows a system notification (clicking it opens the window).
+func Notify(title, body string) {
+	t, b := C.CString(title), C.CString(body)
+	defer C.free(unsafe.Pointer(t))
+	defer C.free(unsafe.Pointer(b))
+	C.ssNotify(t, b)
 }
 
 // Close quits the app, as ⌘Q does.

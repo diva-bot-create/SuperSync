@@ -66,6 +66,7 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 		}
 	}
 	res := &CleanupResult{}
+	before := a.syncSnapshot()
 	var ops []MergeOp
 	var files []string
 	for _, g := range groups {
@@ -146,6 +147,7 @@ func (a *App) CleanupDuplicates(groups []CleanupGroup) (*CleanupResult, error) {
 	a.State.LastCleanup = last
 	a.State.save()
 	a.State.mu.Unlock()
+	a.record(fmt.Sprintf("Cleaned up %d duplicate%s", len(files), plural(len(files))), res.Backup, before, moves, false)
 	return res, err
 }
 
@@ -221,6 +223,7 @@ func (a *App) undoCleanup() error {
 		if err := a.Src.Restore(last.Backup); err != nil {
 			return err
 		}
+		dropHistoryFrom(last.Backup)
 		a.rebuild()
 	}
 	if _, err := analyze.UndoMoves(last.Moves); err != nil {

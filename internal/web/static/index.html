@@ -198,6 +198,9 @@ a.sctitle:hover { color: var(--accent); }
 .copy.drop .path { color: var(--muted); }
 .copy.drop .path span { background-size: 100% 1.5px; }
 .gwarn:empty { display: none; }
+.hist { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+.hist:first-child { border-top: 0; }
+#histList { max-height: 55vh; overflow: auto; }
 .cuechoice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 8px; }
 .cuechoice select { font: inherit; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
 .cuechoice .muted { flex-basis: 100%; }
@@ -507,6 +510,7 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <span id="libText"></span>
     <div class="bar" id="scanBar"><i></i></div>
     <button class="small primary hidden" id="updBtn"></button>
+    <button class="small" id="histBtn" title="SuperSync's recent changes to your library, with Undo">History</button>
     <button class="small" id="rescan">Rescan</button>
   </div>
 </header>
@@ -629,6 +633,8 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
           </select>
         </div>
         <div class="muted" id="cleanupNote" style="font-size:12.5px;margin-top:8px"></div>
+        <label class="row" style="margin-top:14px;gap:8px;cursor:pointer"><input type="checkbox" id="autoSwap" style="accent-color:var(--accent)"> Swap in better copies by myself when a track has no cues yet</label>
+        <div class="muted" style="font-size:12.5px;margin:4px 0 0 26px">When you download or buy a better copy of a LOW or NORMAL track (into your music folder or Downloads) and SuperSync can hear it's the same recording, it takes the old one's place in your playlists straight away. Tracks with cues always wait for you to click Swap in. Undo from History.</div>
       </div>
       <div class="panel setting" id="appPanel">
         <h3>App</h3>
@@ -696,6 +702,15 @@ html[data-vt=back]::view-transition-new(main) { animation: .5s var(--ease) both 
     <div class="warn">If you're playing, cancel: the decks stop. A force-quit skips any rekordbox dialog and loses anything unsaved in it, such as an export in progress. Your library is backed up first either way.</div>
   </div>
   <div class="dlg-f"><button id="quitNo">Keep rekordbox open</button><button class="primary" id="quitYes">Quit rekordbox &amp; continue</button></div>
+</dialog>
+
+<dialog id="histDlg">
+  <div class="dlg-h">Recent changes</div>
+  <div class="dlg-b">
+    <p class="muted" style="margin-top:0;font-size:12.5px">SuperSync's changes to your library, newest first. Undo puts the library back as it was before a change, along with any files it moved, and takes back everything after it too.</p>
+    <div id="histList"></div>
+  </div>
+  <div class="dlg-f"><button id="histClose">Close</button></div>
 </dialog>
 
 <dialog id="importDlg">
@@ -1092,6 +1107,7 @@ async function refresh() {
   $("#autoSync").value = String(S.autoSyncHours || 0);
   $("#autoApply").checked = !!S.autoApply;
   $("#mirrorRemovals").checked = S.mirrorRemovals !== false;
+  $("#autoSwap").checked = S.autoSwap !== false;
   paintUpdate();
   paintApp();
   $("#cleanupAction").value = S.cleanupAction || "trash";
@@ -1139,6 +1155,7 @@ async function refresh() {
     }
     if (S.scanErr) toast("Scan failed: " + S.scanErr, "err");
     const v = S.scannedAt + S.tracks + "/" + S.upscaled + "/" + (S.listenLeft === 0); // re-check duplicates once every file has been listened to
+    showNotices();
     if (v !== libVersion) { const first = !libVersion; libVersion = v; if (!first) onLibraryChanged(); }
     pollTimer = setTimeout(refresh, S.listening ? 1500 : 3000); // rekordbox open/closed, pending changes
   }
@@ -2281,6 +2298,65 @@ async function swapUpgrade(r, path) {
   finally { setBusy(-1); refresh(); }
 }
 
+// ---------- notices: things SuperSync did by itself ----------
+let lastNotice = null;
+function showNotices() {
+  const ns = S.notices || [];
+  const newest = ns.length ? ns[ns.length - 1].id : 0;
+  if (lastNotice === null) { lastNotice = newest; return; } // don't replay old ones on load
+  const fresh = ns.filter(n => n.id > lastNotice);
+  lastNotice = Math.max(lastNotice, newest);
+  if (!fresh.length) return;
+  fresh.forEach(n => toast(n.title + (n.body ? ": " + n.body.split("\n").join(" · ") : ""), "ok", n.kind === "swap" ? { label: "History", run: showHistory } : undefined));
+  if (fresh.some(n => n.kind === "sync" || n.kind === "swap" || n.kind === "apply")) {
+    dupesLoaded = upsLoaded = false;
+    loadLibrary().then(() => { if (cur.id) openList(cur.id, { quiet: true }); }).catch(() => {});
+  }
+}
+
+// ---------- history ----------
+function fmtWhen(t) {
+  const d = new Date(t), mins = (Date.now() - d) / 60000;
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${Math.round(mins)} min ago`;
+  if (mins < 60 * 24 && d.getDate() === new Date().getDate()) return "today " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+async function showHistory() {
+  const d = $("#histDlg"), list = $("#histList");
+  list.innerHTML = `<div class="empty"><span class="spin"></span>Loading…</div>`;
+  openDlg(d);
+  let items;
+  try { items = await api("history"); } catch (e) { list.innerHTML = `<div class="warn">${esc(e.message)}</div>`; return; }
+  if (!items.length) { list.innerHTML = `<div class="empty">No changes yet.</div>`; return; }
+  list.innerHTML = items.map(h => `<div class="hist">
+      <div class="grow"><div>${esc(h.label)}${h.auto ? ` <span class="badge" style="text-transform:none">automatic</span>` : ""}</div>
+        <div class="muted" style="font-size:12px">${fmtWhen(h.at)}${h.files ? ` · ${h.files} file${h.files === 1 ? "" : "s"} moved` : ""}</div></div>
+      ${h.undoable ? `<button class="small" data-undo="${h.id}">Undo${h.after ? ` (+${h.after} later)` : ""}</button>` : `<span class="muted" style="font-size:12px" title="SuperSync keeps the last 10 library backups">backup cleared</span>`}
+    </div>`).join("");
+  list.onclick = async e => {
+    const b = e.target.closest("[data-undo]");
+    if (!b) return;
+    const h = items.find(x => x.id === b.dataset.undo);
+    await closeDlg(d);
+    const later = h.after ? `<p>That also takes back the ${h.after} change${h.after === 1 ? "" : "s"} after it: ${items.slice(0, h.after).map(x => `“${esc(x.label)}”`).join(", ")}.</p>` : "";
+    const ok = await askConfirm(`Undo “${h.label}”?`, `<p style="margin-top:0">Your library goes back to how it was before this change (${fmtWhen(h.at)}), and files it moved go back where they were.</p>${later}
+      ${h.changed ? `<div class="warn">rekordbox has changed the library since SuperSync's last change (cues, playlists or tracks you edited there). Those edits would be lost too.</div>` : ""}`, "Undo", !!h.changed);
+    if (!ok) return;
+    setBusy(+1);
+    try {
+      const r = await withRekordbox("undo that change", restart => api("history/undo", { id: h.id, restart }));
+      if (!r) return;
+      toast(r.note ? "Undone. " + r.note : "Undone: your library is back as it was.", "ok");
+      dupesLoaded = upsLoaded = false;
+      await loadLibrary(); if (cur.id) openList(cur.id, { quiet: true });
+    } catch (e) { toast(e.message, "err"); }
+    finally { setBusy(-1); refresh(); }
+  };
+}
+$("#histBtn").onclick = showHistory;
+$("#histClose").onclick = () => closeDlg($("#histDlg"));
+
 // ---------- tracks SuperSync wasn't sure about, and missing files ----------
 // After the user says a track is one they already have: if SuperSync had its
 // own copy too, the worse one was cleaned up like a duplicate (with Undo).
@@ -3178,6 +3254,7 @@ $("#diagBtn").onclick = async () => {
 $("#autoSync").onchange = e => saveSetting({ autoSyncHours: Number(e.target.value) });
 $("#autoApply").onchange = e => saveSetting({ autoApply: e.target.checked });
 $("#mirrorRemovals").onchange = e => saveSetting({ mirrorRemovals: e.target.checked });
+$("#autoSwap").onchange = e => saveSetting({ autoSwap: e.target.checked });
 $("#syncAll").onclick = async () => { try { await api("sync/all", {}); toast("Syncing all playlists…"); setTimeout(refresh, 800); } catch (e) { toast(e.message, "err"); } };
 $("#pickMusic").onclick = async () => {
   const dir = await pick("Choose your download folder", S.musicDir);

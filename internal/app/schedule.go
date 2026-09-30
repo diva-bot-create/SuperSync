@@ -1,7 +1,9 @@
 package app
 
 import (
+	"fmt"
 	"log"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +46,8 @@ func (a *App) Background(stop <-chan struct{}) {
 					log.Printf("auto-apply: %v", err)
 				} else if n > 0 {
 					log.Printf("auto-apply: added %d waiting change(s) to rekordbox", n)
+					a.notify(Notice{Kind: "apply", Title: "Added to rekordbox",
+						Body: fmt.Sprintf("%d waiting change%s went in when rekordbox closed.", n, plural(n))})
 				}
 			}
 		}
@@ -73,6 +77,7 @@ func (a *App) SyncAll() {
 	a.State.LastSync = time.Now()
 	a.State.save()
 	a.State.mu.Unlock()
+	var changed []string
 	for _, p := range a.SCPlaylists() {
 		j, err := a.ImportPlaylist(p.URL)
 		if err != nil {
@@ -82,9 +87,17 @@ func (a *App) SyncAll() {
 		for j.running() {
 			time.Sleep(time.Second)
 		}
-		if v := j.Snapshot(); v.Status == "error" {
+		v := j.Snapshot()
+		if v.Status == "error" {
 			log.Printf("auto-sync %s: %s", p.Title, v.Message)
+			continue
 		}
+		if s := syncSummary(v); s != "" {
+			changed = append(changed, s)
+		}
+	}
+	if len(changed) > 0 {
+		a.notify(Notice{Kind: "sync", Title: "Synced your playlists", Body: strings.Join(changed, "\n")})
 	}
 }
 

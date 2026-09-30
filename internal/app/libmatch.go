@@ -126,7 +126,7 @@ func (a *App) LinkEntry(playlistURL string, scID int64, trackID string) (*LinkRe
 	case previous != "" && previous != t.ID:
 		// A wrong match (a different song): it just leaves the playlist.
 		if pid := sp.PlaylistID; pid != "" {
-			if _, err := a.Src.EditPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: []string{previous}}); err != nil {
+			if _, err := a.editPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: []string{previous}}, "Took a wrong match off “"+sp.Title+"”"); err != nil {
 				return nil, err
 			}
 		}

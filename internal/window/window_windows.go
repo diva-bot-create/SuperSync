@@ -48,6 +48,9 @@ var (
 	releaseCapture      = user32.NewProc("ReleaseCapture")
 	getSystemMetrics    = user32.NewProc("GetSystemMetrics")
 	moveMemory          = kernel32.NewProc("RtlMoveMemory")
+	isWindowVisible     = user32.NewProc("IsWindowVisible")
+	isIconic            = user32.NewProc("IsIconic")
+	getForegroundWindow = user32.NewProc("GetForegroundWindow")
 )
 
 const (
@@ -69,7 +72,11 @@ const (
 	swShow        = 5
 	gwlpWndProc   = ^uintptr(3) // -4
 	nimAdd        = 0
+	nimModify     = 1
 	nimDelete     = 2
+	nifInfo       = 0x10
+	niifInfo      = 1
+	ninBalloonClk = 0x0405 // NIN_BALLOONUSERCLICK
 	nifMessage    = 1
 	nifIcon       = 2
 	nifTip        = 4
@@ -191,7 +198,7 @@ func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
 		}
 	case wmTray:
 		switch lp & 0xffff {
-		case wmLButtonUp, wmLButtonDbl:
+		case wmLButtonUp, wmLButtonDbl, ninBalloonClk:
 			show(hwnd)
 		case wmRButtonUp:
 			trayMenu(hwnd)
@@ -311,6 +318,39 @@ func Edit(action string) {
 		keybdEvent.Call(key, 0, 0, 0)
 		keybdEvent.Call(key, 0, keyUp, 0)
 		keybdEvent.Call(vkControl, 0, keyUp, 0)
+	})
+}
+
+// Active reports whether the window is on screen and in front.
+func Active() bool {
+	mu.Lock()
+	w := cur
+	mu.Unlock()
+	if w == nil {
+		return false
+	}
+	h := uintptr(w.Window())
+	vis, _, _ := isWindowVisible.Call(h)
+	min, _, _ := isIconic.Call(h)
+	fg, _, _ := getForegroundWindow.Call()
+	return vis != 0 && min == 0 && fg == h
+}
+
+// Notify shows a notification from the tray icon (clicking it opens the
+// window).
+func Notify(title, body string) {
+	with(func(webview2.WebView) {
+		if tray.HWnd == 0 {
+			return
+		}
+		n := tray
+		n.UFlags = nifInfo
+		n.DwInfoFlags = niifInfo
+		t, _ := syscall.UTF16FromString(title)
+		b, _ := syscall.UTF16FromString(body)
+		copy(n.SzInfoTitle[:len(n.SzInfoTitle)-1], t)
+		copy(n.SzInfo[:len(n.SzInfo)-1], b)
+		shellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(&n)))
 	})
 }
 

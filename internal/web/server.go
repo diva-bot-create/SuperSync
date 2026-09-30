@@ -113,6 +113,13 @@ func Serve(a *app.App, port int, showUI, background bool, version string) error 
 	if a.Cfg.OpenAtLogin {
 		autostart.Set(true) // keep the login item pointing at this copy
 	}
+	// Things SuperSync did by itself: a system notification when the
+	// window isn't in front (the page shows them as it polls, too).
+	app.OnNotice = func(n app.Notice) {
+		if s.inWindow && !window.Active() {
+			window.Notify(n.Title, n.Body)
+		}
+	}
 	go a.Background(nil) // scheduled syncs, auto-apply when rekordbox closes
 	go s.updateLoop()
 

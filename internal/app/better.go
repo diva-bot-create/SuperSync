@@ -2,8 +2,10 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 
 	"supersync/internal/analyze"
 	"supersync/internal/audio"
+	"supersync/internal/fingerprint"
 	"supersync/internal/library"
 	"supersync/internal/match"
 	"supersync/internal/rbdb"
@@ -90,6 +93,79 @@ func (a *App) FindBetterCopies() {
 	a.mu.Lock()
 	a.better = out
 	a.mu.Unlock()
+	a.autoSwap(out)
+}
+
+// autoSwap swaps in better copies by itself for tracks without cues, when
+// the two files sound like the same recording, rekordbox is closed, and the
+// user hasn't swapped that file back before. Each swap is in the history.
+func (a *App) autoSwap(found map[string]*BetterCopy) {
+	if a.Cfg.NoAutoSwap || len(found) == 0 || a.Src == nil || a.Cfg.MusicDir == "" {
+		return
+	}
+	if a.Src.Info().Kind == "rekordbox" && rbdb.Running() {
+		return // tried again at the next look (every few minutes)
+	}
+	a.State.mu.Lock()
+	done := map[string]bool{}
+	for _, p := range a.State.AutoSwapped {
+		done[filepath.Clean(p)] = true
+	}
+	a.State.mu.Unlock()
+	var swapped []string
+	for id, b := range found {
+		t := a.Src.Track(id)
+		if t == nil || done[filepath.Clean(b.Path)] {
+			continue
+		}
+		if ct := a.Col.Lookup(t.Path); ct == nil || ct.Cues > 0 {
+			continue
+		}
+		if !a.soundsSame(t.Path, t.Length, b.Path) {
+			continue
+		}
+		a.State.mu.Lock()
+		a.State.AutoSwapped = append(a.State.AutoSwapped, b.Path)
+		a.State.save()
+		a.State.mu.Unlock()
+		if _, err := a.SwapUpgrade(id, b.Path); err != nil {
+			log.Printf("auto-swap %s: %v", t.Title, err)
+			continue
+		}
+		amendLast(func(e *HistoryEntry) { e.Auto = true })
+		swapped = append(swapped, t.Title)
+	}
+	if len(swapped) > 0 {
+		a.notify(Notice{Kind: "swap", Title: fmt.Sprintf("Swapped in %d better cop%s", len(swapped), map[bool]string{true: "y", false: "ies"}[len(swapped) == 1]),
+			Body: strings.Join(swapped, ", ")})
+	}
+}
+
+// soundsSame fingerprints two files and says whether they're one recording.
+func (a *App) soundsSame(pathA string, lengthA int, pathB string) bool {
+	var fa fingerprint.FP
+	if a.Lib != nil {
+		a.mu.Lock()
+		if lt := a.Lib.ByPath(pathA); lt != nil {
+			fa = lt.FP
+		}
+		a.mu.Unlock()
+	}
+	var err error
+	if len(fa) == 0 {
+		if fa, err = fingerprint.File(pathA, float64(lengthA)); err != nil {
+			return false
+		}
+	}
+	in, err := audio.Read(pathB)
+	if err != nil {
+		return false
+	}
+	fb, err := fingerprint.File(pathB, in.Duration)
+	if err != nil || len(fa) == 0 || len(fb) == 0 {
+		return false
+	}
+	return fingerprint.Compare(fa, fb).BER <= fingerprint.Same
 }
 
 // goodEnough: HQ or better (and not a known upscale).
@@ -211,6 +287,15 @@ func (a *App) SwapUpgrade(id, path string) (*CleanupResult, error) {
 			a.State.save()
 		}
 		a.State.mu.Unlock()
+		amendLast(func(e *HistoryEntry) {
+			e.Label = "Swapped in a better copy of “" + old.Title + "”"
+			if before != "" {
+				e.Backup = before
+			}
+			if brought != nil {
+				e.Moves = append(e.Moves, *brought)
+			}
+		})
 	}
 	a.mu.Lock()
 	delete(a.better, id)

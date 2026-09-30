@@ -120,6 +120,10 @@ and its history, your cues move across lined up to the new file, and the old fil
 the Trash (or wherever **Settings → Clean-up** says). **Undo** puts the library back. If SuperSync hasn't spotted the file, choose
 **I have a better copy** and either choose the file or pick it from your library.
 
+For tracks you haven't set cues on yet, SuperSync does the swap by itself, as soon as it can hear
+the new file is the same recording, and lets you know. Tracks with cues always wait for you. You can
+turn this off in **Settings → Clean-up**.
+
 **Songs you already have.** When a playlist syncs, songs already in your library are added as they
 are: nothing is downloaded, and your cues, beatgrid and play history stay. If SuperSync isn't sure
 a file is the same recording (maybe it's another version), the track shows **MAYBE**. Choose
@@ -154,6 +158,13 @@ Click any track to see its waveform, beatgrid, hot cues, memory cues and loops. 
 play it, click a cue to jump to it, or press keys 1–8 for hot cues A–H. Space plays and pauses.
 
 ## Keeping your library safe
+
+- **History.** Click **History** at the top to see SuperSync's recent changes to your library
+  (syncs, clean-ups, swaps, playlist edits), each with **Undo**. Undo puts the library back as it
+  was before that change, with any files it moved, and takes back the changes after it too.
+- **Notifications.** When SuperSync does something by itself (a scheduled sync that added songs, a
+  better copy swapped in, waiting changes added when rekordbox closed), it tells you: in the window,
+  or with a system notification when it's in the background.
 
 - **Everything is backed up.** Before SuperSync changes your rekordbox library, it saves a copy of
   it. The last 10 copies are kept.

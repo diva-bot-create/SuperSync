@@ -614,10 +614,38 @@ func (s *xmlSource) Refresh() bool {
 }
 func (s *xmlSource) Close() {}
 
+// backupLocked copies the library file into a new backup folder (keeping
+// the last 10) and returns the folder, or "" if it couldn't.
+func (s *xmlSource) backupLocked() string {
+	root := filepath.Join(DataDir(), "library backups")
+	b, err := os.ReadFile(s.lib.Path)
+	if err != nil || os.MkdirAll(root, 0o755) != nil {
+		return ""
+	}
+	// A new folder every time, even for two writes in one millisecond.
+	stamp := time.Now().Format("2006-01-02 15.04.05.000")
+	dir := filepath.Join(root, stamp)
+	for i := 2; os.Mkdir(dir, 0o755) != nil; i++ {
+		if i > 50 {
+			return ""
+		}
+		dir = filepath.Join(root, fmt.Sprintf("%s-%d", stamp, i))
+	}
+	if os.WriteFile(filepath.Join(dir, filepath.Base(s.lib.Path)), b, 0o644) != nil {
+		return ""
+	}
+	if es, err := os.ReadDir(root); err == nil && len(es) > 10 {
+		for _, e := range es[:len(es)-10] { // names sort by time
+			os.RemoveAll(filepath.Join(root, e.Name()))
+		}
+	}
+	return dir
+}
+
 func (s *xmlSource) Apply(c *Change) (*Applied, error) {
 	s.mu.Lock()
 	lib := s.lib
-	res := &Applied{}
+	res := &Applied{Backup: s.backupLocked()}
 	var keys []string
 	for _, it := range c.Items {
 		id := it.TrackID
@@ -666,13 +694,7 @@ func (s *xmlSource) Apply(c *Change) (*Applied, error) {
 func (s *xmlSource) EditPlaylists(e PlaylistEdit) (*PlaylistEditResult, error) {
 	s.mu.Lock()
 	lib := s.lib
-	res := &PlaylistEditResult{}
-	backup := filepath.Join(DataDir(), "library backups", time.Now().Format("2006-01-02 15.04.05.000"))
-	os.MkdirAll(backup, 0o755)
-	if b, err := os.ReadFile(lib.Path); err == nil {
-		os.WriteFile(filepath.Join(backup, filepath.Base(lib.Path)), b, 0o644)
-		res.Backup = backup
-	}
+	res := &PlaylistEditResult{Backup: s.backupLocked()}
 	var err error
 	node := lib.Node(e.ID)
 	switch e.Op {
@@ -757,11 +779,7 @@ func (s *xmlSource) Relocate(moves map[string]string) error {
 func (s *xmlSource) Merge(ops []MergeOp) (string, error) {
 	s.mu.Lock()
 	lib := s.lib
-	backup := filepath.Join(DataDir(), "library backups", time.Now().Format("2006-01-02 15.04.05"))
-	os.MkdirAll(backup, 0o755)
-	if b, err := os.ReadFile(lib.Path); err == nil {
-		os.WriteFile(filepath.Join(backup, filepath.Base(lib.Path)), b, 0o644)
-	}
+	backup := s.backupLocked()
 	for _, op := range ops {
 		keep, extra := lib.Track(op.Keep), lib.Track(op.Extra)
 		if keep == nil || extra == nil {

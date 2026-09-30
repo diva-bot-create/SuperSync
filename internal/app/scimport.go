@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"log"
 	"os"
@@ -31,6 +32,9 @@ type State struct {
 	Pending     []*Change     `json:"pending"`
 	LastCleanup *LastCleanup  `json:"lastCleanup,omitempty"`
 	LastSync    time.Time     `json:"lastSync,omitempty"`
+	// AutoSwapped: better copies SuperSync swapped in by itself, so one the
+	// user swapped back (Undo) isn't swapped in again.
+	AutoSwapped []string `json:"autoSwapped,omitempty"`
 }
 
 // SCPlaylist links a SoundCloud playlist to a library playlist.
@@ -593,6 +597,7 @@ func newTrack(in *audio.Info, title, artist string) *rbdb.NewTrack {
 
 // applyChange writes a change to the library, or parks it until rekordbox closes.
 func (a *App) applyChange(ch *Change) error {
+	before := a.syncSnapshot()
 	res, err := a.Src.Apply(ch)
 	if errors.Is(err, rbdb.ErrRunning) {
 		a.State.mu.Lock()
@@ -613,6 +618,7 @@ func (a *App) applyChange(ch *Change) error {
 	if err != nil {
 		return err
 	}
+	a.record(ch.Label, res.Backup, before, nil, false)
 	a.afterApply(ch, res)
 	return nil
 }
@@ -674,7 +680,7 @@ func (a *App) removeGone(link string) {
 		a.State.mu.Unlock()
 		return
 	}
-	if _, err := a.Src.EditPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: ids}); err != nil {
+	if _, err := a.editPlaylists(PlaylistEdit{Op: "remove", ID: pid, TrackIDs: ids}, fmt.Sprintf("Took %d song%s no longer on SoundCloud/YouTube off “%s”", len(ids), plural(len(ids)), sp.Title)); err != nil {
 		log.Printf("removing songs no longer in %s: %v", link, err)
 		return // kept in ToRemove: tried again at the next write
 	}
@@ -698,10 +704,12 @@ func (a *App) ApplyPending() (int, error) {
 	a.State.mu.Unlock()
 	n := 0
 	for _, ch := range pending {
+		before := a.syncSnapshot()
 		res, err := a.Src.Apply(ch)
 		if err != nil {
 			return n, err
 		}
+		a.record(ch.Label, res.Backup, before, nil, false)
 		a.State.mu.Lock()
 		for i, p := range a.State.Pending {
 			if p == ch {
