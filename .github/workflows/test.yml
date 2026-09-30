@@ -1,0 +1,75 @@
+# Tests every push on Windows, Mac and Linux, and starts the Windows app to
+# catch start-up crashes (several bugs only ever showed up on Windows).
+name: Test
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+        env:
+          CGO_ENABLED: "1"
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build -o SuperSync.exe .
+      - name: Start SuperSync and check it keeps running
+        shell: pwsh
+        run: |
+          $home2 = Join-Path $env:RUNNER_TEMP "home"
+          $music = Join-Path $env:RUNNER_TEMP "music"
+          New-Item -ItemType Directory -Force -Path $home2, $music | Out-Null
+          # A clean profile: SuperSync's settings go under %AppData%.
+          $env:APPDATA = Join-Path $home2 "AppData\Roaming"
+          $env:LOCALAPPDATA = Join-Path $home2 "AppData\Local"
+          $env:USERPROFILE = $home2
+          $data = Join-Path $env:APPDATA "SuperSync"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          "{`"musicDir`":`"$($music -replace '\\','\\')`"}" | Set-Content -Encoding utf8 (Join-Path $data "config.json")
+
+          .\SuperSync.exe help
+          if ($LASTEXITCODE -ne 0) { throw "help failed" }
+
+          $p = Start-Process -FilePath .\SuperSync.exe -ArgumentList "--port","47300","--no-browser" -PassThru -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+          $up = $false
+          for ($i = 0; $i -lt 30 -and -not $up; $i++) {
+            Start-Sleep -Seconds 1
+            try { $up = (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:47300/ping).Content -eq "supersync" } catch {}
+          }
+          if (-not $up) { Get-Content out.txt, err.txt; throw "SuperSync didn't start" }
+
+          $token = (Get-Content (Join-Path $data "token") -Raw).Trim()
+          $h = @{ "X-SuperSync-Token" = $token }
+          Invoke-RestMethod -Method Post -Headers $h -ContentType application/json -Body "{}" http://127.0.0.1:47300/api/scan | Out-Null
+          # Let the background work (scans, update check, listening) run a while.
+          Start-Sleep -Seconds 20
+          $state = Invoke-RestMethod -Headers $h http://127.0.0.1:47300/api/state
+          Write-Host "Library: $($state.source.kind), $($state.tracks) tracks"
+
+          if ($p.HasExited) { Get-Content out.txt, err.txt; throw "SuperSync quit (exit $($p.ExitCode))" }
+          $crash = Join-Path $data "crash.txt"
+          if ((Test-Path $crash) -and (Get-Item $crash).Length -gt 0) { Get-Content $crash; throw "SuperSync crashed" }
+          Stop-Process -Id $p.Id
