@@ -21,6 +21,8 @@ func TestRemoveFromPlaylist(t *testing.T) {
 			w.Write([]byte(`{"id":77,"username":"dj"}`))
 		case r.URL.Path == "/playlists/9":
 			w.WriteHeader(403) // someone else's
+		case r.URL.Path == "/playlists/6":
+			w.Write([]byte(`{"id":6,"track_count":3,"tracks":[{"id":1},{"id":2}]}`)) // one missing
 		case r.Method == "GET" && r.URL.Path == "/playlists/5":
 			var ts []map[string]int64
 			for _, id := range tracks {
@@ -62,6 +64,9 @@ func TestRemoveFromPlaylist(t *testing.T) {
 	}
 	if _, err := c.RemoveFromPlaylist("2-secret", 9, []int64{1}); !errors.Is(err, ErrNotMine) {
 		t.Fatalf("someone else's playlist: %v", err)
+	}
+	if _, err := c.RemoveFromPlaylist("2-secret", 6, []int64{1}); err == nil {
+		t.Fatal("changed a playlist SoundCloud only sent part of")
 	}
 	if _, _, err := c.Me("wrong"); !errors.Is(err, errUnauthorized) {
 		t.Fatalf("bad token: %v", err)

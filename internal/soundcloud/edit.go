@@ -78,12 +78,18 @@ func (c *Client) Me(token string) (id int64, username string, err error) {
 // PlaylistTrackIDs is a playlist's tracks, in order, as its owner sees it.
 func (c *Client) PlaylistTrackIDs(token string, playlistID int64) ([]int64, error) {
 	var p struct {
-		Tracks []struct {
+		TrackCount *int `json:"track_count"`
+		Tracks     []struct {
 			ID int64 `json:"id"`
 		} `json:"tracks"`
 	}
 	if err := c.authed("GET", "/playlists/"+strconv.FormatInt(playlistID, 10), token, nil, &p); err != nil {
 		return nil, err
+	}
+	// Changing a playlist means sending its whole list back: never work
+	// from a list that's missing some.
+	if p.TrackCount != nil && *p.TrackCount != len(p.Tracks) {
+		return nil, fmt.Errorf("SoundCloud sent %d of the playlist's %d tracks, so SuperSync left it alone", len(p.Tracks), *p.TrackCount)
 	}
 	ids := make([]int64, len(p.Tracks))
 	for i, t := range p.Tracks {
